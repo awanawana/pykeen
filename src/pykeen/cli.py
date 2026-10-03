@@ -147,11 +147,9 @@ def _get_resolver_lines2(
         if name not in dir(importlib.import_module(module)):
             click.secho(message=f"{name} not visible in {module}", err=True)
         # get docdata and extract name & citation
-        docdata = resolver.docdata(clsx) or {}
-        assert isinstance(docdata, dict)
+        docdata: dict[str, Any] = resolver.docdata(clsx) or {}
         # fallback for name: capitalized class name without base suffix
         name = docdata.get("name", clsx.__name__.replace(resolver.base.__name__, ""))
-        assert isinstance(name, str)
         # extract citation information and warn about lack thereof
         citation = _citation(docdata)
         if not citation:
@@ -199,7 +197,7 @@ def _help_representations(tablefmt: str = "github", *, link_fmt: str | None = No
             resolver=representation_resolver,
             link_fmt=link_fmt,
             # cf. https://github.com/python/mypy/issues/5374
-            skip={MessagePassingRepresentation},
+            skip={MessagePassingRepresentation},  # type: ignore[type-abstract]
         )
     ]
     headers = ["Name", "Reference"]
@@ -414,10 +412,10 @@ def _get_lines_alternative(tablefmt, d, torch_prefix, pykeen_prefix, link_fmt: s
             doc = cls.__doc__
             reference = f"[`{path}`]({link_fmt.format(path)})" if link_fmt else f"`{path}`"
 
-            yield name, reference, get_until_first_blank(doc)
+            yield name, reference, get_until_first_blank(doc or "")
         else:
             doc = cls.__doc__
-            yield name, path, get_until_first_blank(doc)
+            yield name, path, get_until_first_blank(doc or "")
 
 
 @ls.command()
@@ -537,7 +535,8 @@ def _get_resolver_lines(
 
             yield name, reference, doc
         else:
-            assert isinstance(value.__doc__, str)
+            if not isinstance(value.__doc__, str):
+                raise ValueError(f"{name} has no docstring.")
             yield name, value.__doc__.splitlines()[0]
 
 
@@ -700,7 +699,7 @@ def get_readme() -> str:
         evaluators=_help_evaluators(tablefmt, link_fmt=api_link_fmt),
         n_evaluators=len(evaluator_resolver.lookup_dict),
         metrics=_help_metrics(tablefmt),
-        n_metrics=len(get_metric_list()),
+        n_metrics=sum(1 for _ in _get_metrics_lines(tablefmt)),
         trackers=_help_trackers(tablefmt, link_fmt=api_link_fmt),
         n_trackers=len(tracker_resolver.lookup_dict),
     )

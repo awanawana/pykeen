@@ -83,18 +83,17 @@ class WikidataImageCache(WikidataTextCache):
         images: dict[str, dict[str, list[str]]] = {}
         for entry in res_json:
             # entity ID
-            wikidata_id = nested_get(entry, "item", "value", default="")
-            assert isinstance(wikidata_id, str)  # for mypy
+            wikidata_id: str = nested_get(entry, "item", "value", default="")
             wikidata_id = wikidata_id.rsplit("/", maxsplit=1)[-1]
 
             # relation ID
-            relation_id = nested_get(entry, "relation", "value", default="")
-            assert isinstance(relation_id, str)  # for mypy
+            relation_id: str = nested_get(entry, "relation", "value", default="")
             relation_id = relation_id.rsplit("/", maxsplit=1)[-1]
 
             # image URL
-            image_url = nested_get(entry, "image", "value", default=None)
-            assert image_url is not None
+            image_url: str | None = nested_get(entry, "image", "value", default=None)
+            if image_url is None:
+                raise ValueError(f"The SPARQL result for {wikidata_id} has no image URL.")
             images.setdefault(wikidata_id, {}).setdefault(relation_id, []).append(image_url)
 
         # check whether images are still missing
@@ -109,7 +108,7 @@ class WikidataImageCache(WikidataTextCache):
                 if relation not in url_dict:
                     continue
                 # now there is an image available -> select reproducible by URL sorting
-                image_url = sorted(url_dict[relation])[0]
+                image_url = min(url_dict[relation])
                 ext = image_url.rsplit(".", maxsplit=1)[-1].lower()
                 if ext not in extensions:
                     logger.warning(f"Unknown extension: {ext} for {image_url}")
@@ -119,6 +118,8 @@ class WikidataImageCache(WikidataTextCache):
                     name=f"{wikidata_id}.{ext}",
                     download_kwargs={"backend": "requests", "headers": self.HEADERS},
                 )
+                # only download the image for the most preferred relation
+                break
             else:
                 # did not break -> no image
                 logger.warning(f"No image for {wikidata_id}")

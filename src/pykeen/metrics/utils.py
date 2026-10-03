@@ -13,12 +13,12 @@ from ..utils import ExtraReprMixin, camel_to_snake
 __all__ = [
     "Metric",
     "ValueRange",
-    "weighted_mean_expectation",
-    "weighted_mean_variance",
-    "weighted_harmonic_mean",
-    "weighted_median",
     "compute_log_expected_power",
     "compute_median_survival_function",
+    "weighted_harmonic_mean",
+    "weighted_mean_expectation",
+    "weighted_mean_variance",
+    "weighted_median",
 ]
 
 
@@ -114,7 +114,8 @@ class Metric(ExtraReprMixin):
         docdata = get_docdata(cls)
         if docdata is not None and "description" in docdata:
             return docdata["description"]
-        assert cls.__doc__ is not None
+        if cls.__doc__ is None:
+            raise ValueError(f"{cls.__name__} has neither a docdata description nor a docstring.")
         return cls.__doc__.splitlines()[0]
 
     @classmethod
@@ -265,7 +266,7 @@ def weighted_harmonic_mean(a: np.ndarray, weights: np.ndarray | None = None) -> 
     return np.reciprocal(np.average(np.reciprocal(a.astype(float)), weights=weights))
 
 
-def weighted_median(a: np.ndarray, weights: np.ndarray | None = None) -> np.ndarray:
+def weighted_median(a: np.ndarray, weights: np.ndarray | None = None) -> np.floating:
     """Calculate weighted median."""
     if weights is None:
         return np.median(a)

@@ -22,7 +22,7 @@ class LiteralModel(
     ERModel[tuple[FloatTensor, FloatTensor], FloatTensor, tuple[FloatTensor, FloatTensor]],
     autoreset=False,
 ):
-    """Base class for models with entity literals that uses combinations from :class:`pykeen.nn.combinations`."""
+    """Base class for models with entity literals that uses combinations from :mod:`pykeen.nn.combination`."""
 
     #: the interaction class (for generating the overview table)
     interaction_cls: ClassVar[type[Interaction]]
@@ -50,13 +50,10 @@ class LiteralModel(
         """
         literals = triples_factory.get_numeric_literals_tensor()
         _max_id, *shape = literals.shape
-        entity_representations = tuple(upgrade_to_sequence(entity_representations)) + (Embedding,)
-        entity_representations_kwargs = tuple(upgrade_to_sequence(entity_representations_kwargs)) + (
-            {
-                "shape": shape,
-                "initializer": PretrainedInitializer(tensor=literals),
-                "trainable": False,
-            },
+        entity_representations = (*tuple(upgrade_to_sequence(entity_representations)), Embedding)
+        entity_representations_kwargs = (
+            *tuple(upgrade_to_sequence(entity_representations_kwargs)),
+            {"shape": shape, "initializer": PretrainedInitializer(tensor=literals), "trainable": False},
         )
         super().__init__(
             triples_factory=triples_factory,

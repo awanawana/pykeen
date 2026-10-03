@@ -1,8 +1,11 @@
 """Tests of early stopping."""
 
 import unittest
+from collections.abc import Mapping
+from typing import Any, ClassVar
+from unittest.mock import patch
 
-import numpy
+import numpy as np
 import pytest
 import torch
 import unittest_templates
@@ -10,7 +13,9 @@ from torch.optim import Adam
 
 from pykeen.datasets import Nations
 from pykeen.evaluation import RankBasedEvaluator
+from pykeen.evaluation.evaluation_loop import LCWAEvaluationLoop
 from pykeen.models import Model, TransE
+from pykeen.pipeline import pipeline
 from pykeen.stoppers.early_stopping import EarlyStopper, EarlyStoppingLogic, is_improvement
 from pykeen.training import SLCWATrainingLoop
 from tests import cases
@@ -45,7 +50,7 @@ class TestEarlyStoppingLogic(unittest_templates.GenericTestCase[EarlyStoppingLog
     """Tests for early stopping logic."""
 
     cls = EarlyStoppingLogic
-    kwargs = {
+    kwargs: ClassVar[Mapping[str, Any]] = {
         "patience": 2,
         "relative_delta": 0.1,
         "larger_is_better": False,
@@ -73,19 +78,19 @@ class TestEarlyStopper(cases.EarlyStopperTestCase):
     """Tests for early stopping."""
 
     patience: int = 2
-    mock_losses: list[float] = [10.0, 9.0, 8.0, 9.0, 8.0, 8.0]
+    mock_losses: ClassVar[list[float]] = [10.0, 9.0, 8.0, 9.0, 8.0, 8.0]
     stop_constant: int = 4
     delta: float = 0.0
-    best_results: list[float] = [10.0, 9.0, 8.0, 8.0, 8.0]
+    best_results: ClassVar[list[float]] = [10.0, 9.0, 8.0, 8.0, 8.0]
 
 
 class TestEarlyStopperDelta(cases.EarlyStopperTestCase):
     """Test early stopping with a tiny delta."""
 
-    mock_losses: list[float] = [10.0, 9.0, 8.0, 7.99, 7.98, 7.97]
+    mock_losses: ClassVar[list[float]] = [10.0, 9.0, 8.0, 7.99, 7.98, 7.97]
     stop_constant: int = 4
     delta: float = 0.1
-    best_results: list[float] = [10.0, 10.0, 8.0, 8.0, 8.0]
+    best_results: ClassVar[list[float]] = [10.0, 10.0, 8.0, 8.0, 8.0]
 
 
 class TestEarlyStopperRealWorld(unittest.TestCase):
@@ -110,7 +115,7 @@ class TestEarlyStopperRealWorld(unittest.TestCase):
         """Set up the real world early stopping test."""
         # Fix seed for reproducibility
         torch.manual_seed(seed=self.seed)
-        numpy.random.seed(seed=self.seed)  # noqa: NPY002
+        np.random.seed(seed=self.seed)  # noqa: NPY002
 
     @pytest.mark.slow
     def test_early_stopping(self):
@@ -144,3 +149,35 @@ class TestEarlyStopperRealWorld(unittest.TestCase):
         assert stopper.number_results == len(losses) // stopper.frequency
         assert stopper.best_epoch == self.stop_epoch - self.patience * stopper.frequency
         assert self.stop_epoch == len(losses), "Did not stop early like it should have"
+
+
+@pytest.mark.slow
+def test_pipeline_forwards_evaluation_kwargs_to_stopper():
+    """Verify that evaluation_kwargs passed to pipeline() reach every evaluation loop.
+
+    Regression test for https://github.com/pykeen/pykeen/issues/1587.
+    """
+    targets = ("tail",)
+    observed_targets: list = []
+    _original_init = LCWAEvaluationLoop.__init__
+
+    def spy_init(self, *args, **kwargs):
+        observed_targets.append(kwargs.get("targets"))
+        return _original_init(self, *args, **kwargs)
+
+    with patch.object(LCWAEvaluationLoop, "__init__", spy_init):
+        pipeline(
+            dataset="nations",
+            model="TransE",
+            training_kwargs={"num_epochs": 2},
+            evaluation_kwargs={"targets": targets},
+            stopper="early",
+            stopper_kwargs={"frequency": 1, "patience": 100},
+            use_testing_data=False,
+        )
+
+    # one loop for the early stopper, and one for the final evaluation
+    assert len(observed_targets) == 2, observed_targets
+    assert all(t == targets for t in observed_targets), (
+        f"Expected all evaluation loops to use targets={targets!r}, got {observed_targets!r}"
+    )

@@ -6,28 +6,23 @@ from class_resolver.utils import OneOrManyHintOrType, OneOrManyOptionalKwargs
 from .base import ConsoleResultTracker, MultiResultTracker, PythonResultTracker, ResultTracker, TrackerHint
 from .file import CSVResultTracker, FileResultTracker, JSONResultTracker
 from .mlflow import MLFlowResultTracker
-from .neptune import NeptuneResultTracker
 from .tensorboard import TensorBoardResultTracker
 from .wandb import WANDBResultTracker
 
 __all__ = [
-    # Base classes
-    "ResultTracker",
-    "FileResultTracker",
-    "MultiResultTracker",
-    # Concrete classes
-    "MLFlowResultTracker",
-    "NeptuneResultTracker",
-    "WANDBResultTracker",
-    "JSONResultTracker",
     "CSVResultTracker",
-    "PythonResultTracker",
-    "TensorBoardResultTracker",
     "ConsoleResultTracker",
-    # Utilities
-    "tracker_resolver",
+    "FileResultTracker",
+    "JSONResultTracker",
+    "MLFlowResultTracker",
+    "MultiResultTracker",
+    "PythonResultTracker",
+    "ResultTracker",
+    "TensorBoardResultTracker",
     "TrackerHint",
+    "WANDBResultTracker",
     "resolve_result_trackers",
+    "tracker_resolver",
 ]
 
 #: A resolver for result trackers

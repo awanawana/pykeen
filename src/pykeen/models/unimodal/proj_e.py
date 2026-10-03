@@ -43,7 +43,7 @@ class ProjE(ERModel[FloatTensor, FloatTensor, FloatTensor]):
     #: The default loss function class
     loss_default: ClassVar[type[Loss]] = BCEWithLogitsLoss
     #: The default parameters for the default loss function class
-    loss_default_kwargs = {"reduction": "mean"}
+    loss_default_kwargs: ClassVar[Mapping[str, Any]] = {"reduction": "mean"}
 
     @update_docstring_with_resolver_keys(
         ResolverKey(name="inner_non_linearity", resolver="class_resolver.contrib.torch.activation_resolver")
@@ -64,7 +64,7 @@ class ProjE(ERModel[FloatTensor, FloatTensor, FloatTensor]):
         :param embedding_dim:
             the embedding dimension
         :param inner_non_linearity:
-            the inner non-linearity, of a hint thereof. cf. :class:`pykeen.nn.modules.ProjEInteraction`
+            the inner non-linearity, of a hint thereof. cf. :class:`~pykeen.nn.modules.ProjEInteraction`
         :param inner_non_linearity_kwargs:
             additional keyword-based parameters used to instantiate the non-linearity.
         :param entity_initializer:

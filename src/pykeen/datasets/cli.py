@@ -59,7 +59,7 @@ def summarize(dataset_regex: str | None, min_triples: int | None, max_triples: i
         click.secho(f"Loading {name}", fg="green", bold=True)
         try:
             dataset.summarize(show_examples=None)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- keep summarizing the remaining datasets
             click.secho(f"Failed {name}", fg="red", bold=True)
             click.secho(str(e), fg="red", bold=True)
 
@@ -78,7 +78,7 @@ def analyze(
     max_triples: int | None,
     force: bool,
     countplots: bool,
-    directory,
+    directory: pathlib.Path,
 ) -> None:
     """Generate analysis."""
     for name, dataset in iter_dataset_instances(
@@ -98,7 +98,7 @@ def _analyze(
     dataset: Dataset,
     force: bool,
     countplots: bool,
-    directory: None | str | pathlib.Path,
+    directory: str | pathlib.Path | None,
 ) -> None:
     from . import analysis
 
@@ -303,9 +303,8 @@ def expected_metrics(
                 tqdm.write(f"wrote {output_path}")
 
                 # expected metrics
-                ks = (1, 3, 5, 10) + tuple(
-                    10**i for i in range(2, int(math.ceil(math.log(dataset_instance.num_entities))))
-                )
+                upper_bound = math.ceil(math.log(dataset_instance.num_entities))
+                ks = (1, 3, 5, 10, *tuple(10**i for i in range(2, upper_bound)))
                 metrics = [
                     ArithmeticMeanRank(),
                     *(HitsAtK(k) for k in ks),

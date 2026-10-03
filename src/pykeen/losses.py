@@ -1,7 +1,7 @@
 r"""Loss functions integrated in PyKEEN.
 
 Rather than re-using the built-in loss functions in PyTorch, we have elected to re-implement
-some of the code from :mod:`pytorch.nn.modules.loss` in order to encode the three different
+some of the code from :mod:`torch.nn.modules.loss` in order to encode the three different
 links of loss functions accepted by PyKEEN in a class hierarchy. This allows for PyKEEN to more
 dynamically handle different kinds of loss functions as well as share code. Further, it gives
 more insight to potential users.
@@ -141,7 +141,7 @@ Setwise Loss Functions
 ----------------------
 A setwise loss is applied to a set of triples which can be either positive or negative. It is defined as
 $L: 2^{\mathcal{T}} \rightarrow \mathbb{R}$. The two setwise loss functions implemented in PyKEEN,
-:class:`pykeen.losses.NSSALoss` and :class:`pykeen.losses.CrossEntropyLoss` are both widely different
+:class:`~pykeen.losses.NSSALoss` and :class:`~pykeen.losses.CrossEntropyLoss` are both widely different
 in their paradigms, but both share the notion that triples are not strictly positive or negative.
 
 .. math::
@@ -179,31 +179,28 @@ from torch.nn.modules.loss import _Loss
 from .typing import BoolTensor, FloatTensor, LongTensor
 
 __all__ = [
-    # Base Classes
-    "Loss",
-    "PointwiseLoss",
-    "DeltaPointwiseLoss",
-    "MarginPairwiseLoss",
-    "PairwiseLoss",
-    "SetwiseLoss",
-    "AdversarialLoss",
-    # Concrete Classes
     "AdversarialBCEWithLogitsLoss",
+    "AdversarialLoss",
     "BCEAfterSigmoidLoss",
     "BCEWithLogitsLoss",
     "CrossEntropyLoss",
+    "DeltaPointwiseLoss",
+    "DoubleMarginLoss",
     "FocalLoss",
     "InfoNCELoss",
-    "MarginRankingLoss",
+    "Loss",
     "MSELoss",
+    "MarginPairwiseLoss",
+    "MarginRankingLoss",
     "NSSALoss",
-    "SoftplusLoss",
-    "SoftPointwiseHingeLoss",
-    "PointwiseHingeLoss",
-    "DoubleMarginLoss",
-    "SoftMarginRankingLoss",
     "PairwiseLogisticLoss",
-    # Utils
+    "PairwiseLoss",
+    "PointwiseHingeLoss",
+    "PointwiseLoss",
+    "SetwiseLoss",
+    "SoftMarginRankingLoss",
+    "SoftPointwiseHingeLoss",
+    "SoftplusLoss",
     "loss_resolver",
 ]
 
@@ -240,10 +237,14 @@ def apply_label_smoothing(
     """
     if not epsilon:  # either none or zero
         return labels
+    if epsilon > 1.0:
+        raise ValueError(f"epsilon must be <= 1.0, but is {epsilon}")
     if epsilon < 0.0:
         raise ValueError(f"epsilon must be positive, but is {epsilon}")
     if num_classes is None:
         raise ValueError("must pass num_classes to perform label smoothing")
+    if num_classes < 2:
+        raise ValueError(f"num_classes must be at least 2, but is {num_classes}")
 
     new_label_true = 1.0 - epsilon
     new_label_false = epsilon / (num_classes - 1)
@@ -305,12 +306,17 @@ class Loss(_Loss):
     #: The default strategy for optimizing the loss's hyper-parameters
     hpo_default: ClassVar[Mapping[str, Any]] = {}
 
+    #: Whether BCWA scoring rows, i.e., (head, relation)-pairs, without any positive tail are kept.
+    #: Rows which only contain negatives are informative for pointwise losses, but not for losses
+    #: which contrast positives against negatives.
+    bcwa_keep_rows_without_positives: ClassVar[bool] = False
+
     def __init__(self, reduction: Reduction = "mean"):
         """
         Initialize the loss.
 
         :param reduction:
-            the reduction, cf. :mod:`pykeen.nn.modules._Loss`
+            the reduction, cf. :class:`torch.nn.modules.loss._Loss`
         """
         super().__init__(reduction=reduction)
         self._reduction_method = _REDUCTION_METHODS[reduction]
@@ -385,9 +391,59 @@ class Loss(_Loss):
         """
         raise NotImplementedError
 
+    def process_bcwa_scores(
+        self,
+        predictions: FloatTensor,
+        positives: LongTensor,
+        label_smoothing: float | None = None,
+        weights: FloatTensor | None = None,
+    ) -> FloatTensor:
+        """
+        Process scores from the BCWA training loop.
+
+        The last dimension is the target, e.g., the tails for tail prediction. The scores are reshaped to
+        ``(n_1 * n_2, num_targets)``, i.e., each combination of the two other positions becomes one row which scores all
+        target candidates of the batch, and passed to :meth:`process_lcwa_scores`. Unless
+        :attr:`bcwa_keep_rows_without_positives` is set, rows without any positive target are dropped before.
+
+        :param predictions: shape: (n_1, n_2, num_targets)
+            The scores.
+        :param positives: shape: (num_positive_triples, 3)
+            The positive triples in batch-local indices, in the same order of positions as the predictions' dimensions.
+        :param label_smoothing:
+            An optional label smoothing parameter.
+        :param weights: shape: (n_1, n_2, num_targets)
+            Sample weights.
+
+        :return:
+            A scalar loss value.
+        """
+        labels = torch.zeros_like(predictions)
+        labels[positives.unbind(dim=-1)] = 1.0
+        num_targets = predictions.shape[-1]
+        predictions = predictions.reshape(-1, num_targets)
+        labels = labels.reshape(-1, num_targets)
+        if weights is not None:
+            weights = weights.reshape(-1, num_targets)
+        if not self.bcwa_keep_rows_without_positives:
+            mask = labels.any(dim=-1)
+            predictions = predictions[mask]
+            labels = labels[mask]
+            if weights is not None:
+                weights = weights[mask]
+        return self.process_lcwa_scores(
+            predictions=predictions,
+            labels=labels,
+            label_smoothing=label_smoothing,
+            num_entities=num_targets,
+            weights=weights,
+        )
+
 
 class PointwiseLoss(Loss):
     """Pointwise loss functions compute an independent loss term for each triple-label pair."""
+
+    bcwa_keep_rows_without_positives: ClassVar[bool] = True
 
     @abstractmethod
     def forward(self, x: FloatTensor, target: FloatTensor, weight: FloatTensor) -> FloatTensor:
@@ -406,8 +462,7 @@ class PointwiseLoss(Loss):
         """
         raise NotImplementedError
 
-    # docstr-coverage: inherited
-    def process_slcwa_scores(
+    def process_slcwa_scores(  # noqa: D102
         self,
         positive_scores: FloatTensor,
         negative_scores: FloatTensor,
@@ -443,8 +498,7 @@ class PointwiseLoss(Loss):
             weights=weights,
         )
 
-    # docstr-coverage: inherited
-    def process_lcwa_scores(
+    def process_lcwa_scores(  # noqa: D102
         self,
         predictions: FloatTensor,
         labels: FloatTensor,
@@ -533,7 +587,7 @@ class BCEWithLogitsLoss(PointwiseLoss):
     name: Binary cross entropy (with logits)
     """
 
-    synonyms = {"Negative Log Likelihood Loss"}
+    synonyms: ClassVar[set[str]] = {"Negative Log Likelihood Loss"}
 
     hpo_default: ClassVar[Mapping[str, Any]] = {
         "reduction": DEFAULT_HPO_STRATEGY_REDUCTION,
@@ -542,11 +596,11 @@ class BCEWithLogitsLoss(PointwiseLoss):
 
     pos_weight: FloatTensor | None
 
-    def __init__(self, reduction: Reduction = "mean", pos_weight: None | float = None):
+    def __init__(self, reduction: Reduction = "mean", pos_weight: float | None = None):
         """Initialize the loss criterion.
 
         :param reduction:
-            The reduction, cf. :mod:`pykeen.nn.modules._Loss`
+            The reduction, cf. :class:`torch.nn.modules.loss._Loss`
         :param pos_weight:
             A weight for the positive class.
         """
@@ -556,7 +610,6 @@ class BCEWithLogitsLoss(PointwiseLoss):
         else:
             self.pos_weight = None
 
-    # docstr-coverage: inherited
     def forward(self, x: FloatTensor, target: FloatTensor, weight: FloatTensor | None = None) -> FloatTensor:  # noqa: D102
         return functional.binary_cross_entropy_with_logits(
             x, target, reduction=self.reduction, weight=weight, pos_weight=self.pos_weight
@@ -575,9 +628,8 @@ class MSELoss(PointwiseLoss):
     name: Mean squared error
     """
 
-    synonyms = {"Mean Square Error Loss", "Mean Squared Error Loss"}
+    synonyms: ClassVar[set[str]] = {"Mean Square Error Loss", "Mean Squared Error Loss"}
 
-    # docstr-coverage: inherited
     def forward(self, x: FloatTensor, target: FloatTensor, weight: FloatTensor | None = None) -> FloatTensor:  # noqa: D102
         if weight is None:
             return functional.mse_loss(x, target, reduction=self.reduction)
@@ -592,9 +644,9 @@ class MarginPairwiseLoss(PairwiseLoss):
     .. math ::
         L(k, \bar{k}) = g(f(\bar{k}) - f(k) + \lambda)
 
-    Where $k$ are the positive triples, $\bar{k}$ are the negative triples, $f$ is the interaction function (e.g.,
-    :class:`pykeen.models.TransE` has $f(h,r,t)=-||\mathbf{e}_h+\mathbf{e}_r-\mathbf{e}_t||_p$), $g(x)$ is an activation
-    function like the ReLU or softmax, and $\lambda$ is the margin.
+    Where $k$ are the positive triples, $\bar{k}$ are the negative triples, $f$ is the interaction function
+    (e.g., :class:`~pykeen.models.TransE` has $f(h,r,t)=-||\mathbf{e}_h+\mathbf{e}_r-\mathbf{e}_t||_p$), $g(x)$ is
+    an activation function like the ReLU or softmax, and $\lambda$ is the margin.
     """
 
     hpo_default: ClassVar[Mapping[str, Any]] = {
@@ -627,8 +679,7 @@ class MarginPairwiseLoss(PairwiseLoss):
         self.margin = margin
         self.margin_activation = margin_activation_resolver.make(margin_activation)
 
-    # docstr-coverage: inherited
-    def process_slcwa_scores(
+    def process_slcwa_scores(  # noqa: D102
         self,
         positive_scores: FloatTensor,
         negative_scores: FloatTensor,
@@ -637,7 +688,7 @@ class MarginPairwiseLoss(PairwiseLoss):
         num_entities: int | None = None,
         pos_weights: FloatTensor | None = None,
         neg_weights: FloatTensor | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         # Sanity check
         if label_smoothing:
             raise UnsupportedLabelSmoothingError(self)
@@ -652,15 +703,14 @@ class MarginPairwiseLoss(PairwiseLoss):
             pos_scores=positive_scores, neg_scores=negative_scores, pos_weights=pos_weights, neg_weights=neg_weights
         )
 
-    # docstr-coverage: inherited
-    def process_lcwa_scores(
+    def process_lcwa_scores(  # noqa: D102
         self,
         predictions: FloatTensor,
         labels: FloatTensor,
         label_smoothing: float | None = None,
         num_entities: int | None = None,
         weights: FloatTensor | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         # Sanity check
         if label_smoothing:
             raise UnsupportedLabelSmoothingError(self)
@@ -685,14 +735,13 @@ class MarginPairwiseLoss(PairwiseLoss):
 
         return self(pos_scores=positive_scores, neg_scores=negative_scores)
 
-    # docstr-coverage: inherited
-    def forward(
+    def forward(  # noqa: D102
         self,
         pos_scores: FloatTensor,
         neg_scores: FloatTensor,
         pos_weights: FloatTensor | None = None,
         neg_weights: FloatTensor | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         self._raise_on_weights(pos_weights)
         self._raise_on_weights(neg_weights)
         return self._reduction_method(
@@ -715,10 +764,10 @@ class MarginRankingLoss(MarginPairwiseLoss):
 
     .. seealso::
 
-        MRL is closely related to :class:`pykeen.losses.SoftMarginRankingLoss`, only differing in that this loss
-        uses the ReLU activation and :class:`pykeen.losses.SoftMarginRankingLoss` uses the softmax activation. MRL
-        is also related to the :class:`pykeen.losses.PairwiseLogisticLoss` as this is a special case of the
-        :class:`pykeen.losses.SoftMarginRankingLoss` with no margin.
+        MRL is closely related to :class:`~pykeen.losses.SoftMarginRankingLoss`, only differing in that this loss
+        uses the ReLU activation and :class:`~pykeen.losses.SoftMarginRankingLoss` uses the softmax activation. MRL
+        is also related to the :class:`~pykeen.losses.PairwiseLogisticLoss` as this is a special case of the
+        :class:`~pykeen.losses.SoftMarginRankingLoss` with no margin.
 
     .. note::
 
@@ -728,7 +777,7 @@ class MarginRankingLoss(MarginPairwiseLoss):
     name: Margin ranking
     """
 
-    synonyms = {"Pairwise Hinge Loss"}
+    synonyms: ClassVar[set[str]] = {"Pairwise Hinge Loss"}
 
     hpo_default: ClassVar[Mapping[str, Any]] = {
         "margin": DEFAULT_MARGIN_HPO_STRATEGY,
@@ -754,14 +803,14 @@ class SoftMarginRankingLoss(MarginPairwiseLoss):
         L(k, \bar{k}) = \log(1 + \exp(f(\bar{k}) - f(k) + \lambda))
 
     Where $k$ are the positive triples, $\bar{k}$ are the negative triples, $f$ is the interaction function (e.g.,
-    :class:`pykeen.models.TransE` has $f(h,r,t)=-||\mathbf{e}_h+\mathbf{e}_r-\mathbf{e}_t||_p$),
+    :class:`~pykeen.models.TransE` has $f(h,r,t)=-||\mathbf{e}_h+\mathbf{e}_r-\mathbf{e}_t||_p$),
     $g(x)=\log(1 + \exp(x))$ is the softmax activation function, and $\lambda$ is the margin.
 
     .. seealso::
 
-        When choosing `margin=0``, this loss becomes equivalent to :class:`pykeen.losses.SoftMarginRankingLoss`.
-        It is also closely related to :class:`pykeen.losses.MarginRankingLoss`, only differing in that this loss
-        uses the softmax activation and :class:`pykeen.losses.MarginRankingLoss` uses the ReLU activation.
+        When choosing `margin=0``, this loss becomes equivalent to :class:`~pykeen.losses.SoftMarginRankingLoss`.
+        It is also closely related to :class:`~pykeen.losses.MarginRankingLoss`, only differing in that this loss
+        uses the softmax activation and :class:`~pykeen.losses.MarginRankingLoss` uses the ReLU activation.
     ---
     name: Soft margin ranking
     """
@@ -790,13 +839,13 @@ class PairwiseLogisticLoss(SoftMarginRankingLoss):
         L(k, \bar{k}) = \log(1 + \exp(f(\bar{k}) - f(k)))
 
     Where $k$ are the positive triples, $\bar{k}$ are the negative triples, $f$ is the interaction function (e.g.,
-    :class:`pykeen.models.TransE` has $f(h,r,t)=-||\mathbf{e}_h+\mathbf{e}_r-\mathbf{e}_t||_p$),
+    :class:`~pykeen.models.TransE` has $f(h,r,t)=-||\mathbf{e}_h+\mathbf{e}_r-\mathbf{e}_t||_p$),
     $g(x)=\log(1 + \exp(x))$ is the softmax activation function.
 
     .. seealso::
 
-        This loss is equivalent to :class:`pykeen.losses.SoftMarginRankingLoss` where ``margin=0``. It is also
-        closely related to :class:`pykeen.losses.MarginRankingLoss` based on the choice of activation function.
+        This loss is equivalent to :class:`~pykeen.losses.SoftMarginRankingLoss` where ``margin=0``. It is also
+        closely related to :class:`~pykeen.losses.MarginRankingLoss` based on the choice of activation function.
     ---
     name: Pairwise logistic
     """
@@ -934,7 +983,7 @@ class DoubleMarginLoss(PointwiseLoss):
 
         .. note ::
             There are multiple variants to set the pair of margins. A full documentation is provided in
-            :func:`DoubleMarginLoss.resolve_margins`.
+            :func:`~pykeen.losses.DoubleMarginLoss.resolve_margin`.
 
         :param positive_margin:
             The (absolute) margin for the positive scores. Should be larger than the negative one.
@@ -967,8 +1016,7 @@ class DoubleMarginLoss(PointwiseLoss):
         self.positive_weight = positive_negative_balance
         self.margin_activation = margin_activation_resolver.make(margin_activation)
 
-    # docstr-coverage: inherited
-    def process_slcwa_scores(
+    def process_slcwa_scores(  # noqa: D102
         self,
         positive_scores: FloatTensor,
         negative_scores: FloatTensor,
@@ -977,7 +1025,7 @@ class DoubleMarginLoss(PointwiseLoss):
         num_entities: int | None = None,
         pos_weights: FloatTensor | None = None,
         neg_weights: FloatTensor | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         # Sanity check
         if label_smoothing:
             raise UnsupportedLabelSmoothingError(self)
@@ -1006,15 +1054,14 @@ class DoubleMarginLoss(PointwiseLoss):
         negative_loss = self._reduction_method(self.margin_activation(self.negative_margin + negative_scores))
         return self.positive_weight * positive_loss + self.negative_weight * negative_loss
 
-    # docstr-coverage: inherited
-    def process_lcwa_scores(
+    def process_lcwa_scores(  # noqa: D102
         self,
         predictions: FloatTensor,
         labels: FloatTensor,
         label_smoothing: float | None = None,
         num_entities: int | None = None,
         weights: FloatTensor | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         # Sanity check
         if label_smoothing:
             labels = apply_label_smoothing(
@@ -1025,7 +1072,6 @@ class DoubleMarginLoss(PointwiseLoss):
 
         return self(x=predictions, target=labels, weight=weights)
 
-    # docstr-coverage: inherited
     def forward(self, x: FloatTensor, target: FloatTensor, weight: FloatTensor | None = None) -> FloatTensor:  # noqa: D102
         self._raise_on_weights(weight)
         return self.positive_weight * self._reduction_method(
@@ -1041,9 +1087,9 @@ class DeltaPointwiseLoss(PointwiseLoss):
     =============================  ==========  ======================  ========================================================  =============================================
     Pointwise Loss                 Activation  Margin                  Formulation                                               Implementation
     =============================  ==========  ======================  ========================================================  =============================================
-    Pointwise Hinge                ReLU        $\lambda \neq 0$        $g(s, l) = \max(0, \lambda -\hat{l}*s)$                   :class:`pykeen.losses.PointwiseHingeLoss`
-    Soft Pointwise Hinge           softplus    $\lambda \neq 0$        $g(s, l) = \log(1+\exp(\lambda -\hat{l}*s))$              :class:`pykeen.losses.SoftPointwiseHingeLoss`
-    Pointwise Logistic (softplus)  softplus    $\lambda = 0$           $g(s, l) = \log(1+\exp(-\hat{l}*s))$                      :class:`pykeen.losses.SoftplusLoss`
+    Pointwise Hinge                ReLU        $\lambda \neq 0$        $g(s, l) = \max(0, \lambda -\hat{l}*s)$                   :class:`~pykeen.losses.PointwiseHingeLoss`
+    Soft Pointwise Hinge           softplus    $\lambda \neq 0$        $g(s, l) = \log(1+\exp(\lambda -\hat{l}*s))$              :class:`~pykeen.losses.SoftPointwiseHingeLoss`
+    Pointwise Logistic (softplus)  softplus    $\lambda = 0$           $g(s, l) = \log(1+\exp(-\hat{l}*s))$                      :class:`~pykeen.losses.SoftplusLoss`
     =============================  ==========  ======================  ========================================================  =============================================
     """  # noqa:E501
 
@@ -1075,8 +1121,7 @@ class DeltaPointwiseLoss(PointwiseLoss):
         self.margin = margin
         self.margin_activation = margin_activation_resolver.make(margin_activation)
 
-    # docstr-coverage: inherited
-    def forward(self, x: FloatTensor, target: FloatTensor, weight: FloatTensor | None = None) -> FloatTensor:
+    def forward(self, x: FloatTensor, target: FloatTensor, weight: FloatTensor | None = None) -> FloatTensor:  # noqa: D102
         # scale labels from [0, 1] to [-1, 1]
         target = 2 * target - 1
         loss = self.margin_activation(self.margin - target * x)
@@ -1123,9 +1168,9 @@ class SoftPointwiseHingeLoss(DeltaPointwiseLoss):
 
     .. seealso::
 
-        When choosing ``margin=0``, this loss becomes equivalent to :class:`pykeen.losses.SoftplusLoss`.
-        It is also closely related to :class:`pykeen.losses.PointwiseHingeLoss`, only differing in that this loss
-        uses the softmax activation and :class:`pykeen.losses.PointwiseHingeLoss` uses the ReLU activation.
+        When choosing ``margin=0``, this loss becomes equivalent to :class:`~pykeen.losses.SoftplusLoss`.
+        It is also closely related to :class:`~pykeen.losses.PointwiseHingeLoss`, only differing in that this loss
+        uses the softmax activation and :class:`~pykeen.losses.PointwiseHingeLoss` uses the ReLU activation.
     ---
     name: Soft Pointwise Hinge
     """
@@ -1157,7 +1202,7 @@ class SoftplusLoss(SoftPointwiseHingeLoss):
 
     .. seealso::
 
-        This class is a special case of :class:`pykeen.losses.SoftPointwiseHingeLoss` where the margin
+        This class is a special case of :class:`~pykeen.losses.SoftPointwiseHingeLoss` where the margin
         is set to ``margin=0``.
     ---
     name: Softplus
@@ -1189,7 +1234,6 @@ class BCEAfterSigmoidLoss(PointwiseLoss):
     name: Binary cross entropy (after sigmoid)
     """
 
-    # docstr-coverage: inherited
     def forward(self, x: FloatTensor, target: FloatTensor, weight: FloatTensor | None = None) -> FloatTensor:  # noqa: D102
         return functional.binary_cross_entropy(x.sigmoid(), target, weight=weight, reduction=self.reduction)
 
@@ -1246,8 +1290,7 @@ class CrossEntropyLoss(SetwiseLoss):
     name: Cross entropy
     """
 
-    # docstr-coverage: inherited
-    def process_slcwa_scores(
+    def process_slcwa_scores(  # noqa: D102
         self,
         positive_scores: FloatTensor,
         negative_scores: FloatTensor,
@@ -1256,7 +1299,7 @@ class CrossEntropyLoss(SetwiseLoss):
         num_entities: int | None = None,
         pos_weights: FloatTensor | None = None,
         neg_weights: FloatTensor | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         self._raise_on_weights(pos_weights)
         self._raise_on_weights(neg_weights)
         # we need dense negative scores => unfilter if necessary
@@ -1284,15 +1327,14 @@ class CrossEntropyLoss(SetwiseLoss):
             reduction=self.reduction,
         )
 
-    # docstr-coverage: inherited
-    def process_lcwa_scores(
+    def process_lcwa_scores(  # noqa: D102
         self,
         predictions: FloatTensor,
         labels: FloatTensor,
         label_smoothing: float | None = None,
         num_entities: int | None = None,
         weights: FloatTensor | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         # make sure labels form a proper probability distribution
         labels = functional.normalize(labels, p=1, dim=-1)
         # calculate cross entropy loss
@@ -1371,15 +1413,14 @@ class InfoNCELoss(CrossEntropyLoss):
         self.inverse_softmax_temperature = math.exp(log_adversarial_temperature)
         self.margin = margin
 
-    # docstr-coverage: inherited
-    def process_lcwa_scores(
+    def process_lcwa_scores(  # noqa: D102
         self,
         predictions: FloatTensor,
         labels: FloatTensor,
         label_smoothing: float | None = None,
         num_entities: int | None = None,
         weights: FloatTensor | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         # determine positive; do not check with == since the labels are floats
         pos_mask = labels > 0.5
         # subtract margin from positive scores
@@ -1394,8 +1435,7 @@ class InfoNCELoss(CrossEntropyLoss):
             weights=weights,
         )
 
-    # docstr-coverage: inherited
-    def process_slcwa_scores(
+    def process_slcwa_scores(  # noqa: D102
         self,
         positive_scores: FloatTensor,
         negative_scores: FloatTensor,
@@ -1404,7 +1444,7 @@ class InfoNCELoss(CrossEntropyLoss):
         num_entities: int | None = None,
         pos_weights: FloatTensor | None = None,
         neg_weights: FloatTensor | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         # subtract margin from positive scores
         positive_scores = positive_scores - self.margin
         # normalize positive score shape
@@ -1439,15 +1479,14 @@ class AdversarialLoss(SetwiseLoss):
         self.inverse_softmax_temperature = inverse_softmax_temperature
         self.factor = 0.5 if self._reduction_method is torch.mean else 1.0
 
-    # docstr-coverage: inherited
-    def process_lcwa_scores(
+    def process_lcwa_scores(  # noqa: D102
         self,
         predictions: FloatTensor,
         labels: FloatTensor,
         label_smoothing: float | None = None,
         num_entities: int | None = None,
         weights: FloatTensor | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         self._raise_on_weights(weights)
         # determine positive; do not check with == since the labels are floats
         pos_mask = labels > 0.5
@@ -1475,8 +1514,7 @@ class AdversarialLoss(SetwiseLoss):
 
         return self.factor * (pos_loss + neg_loss)
 
-    # docstr-coverage: inherited
-    def process_slcwa_scores(
+    def process_slcwa_scores(  # noqa: D102
         self,
         positive_scores: FloatTensor,
         negative_scores: FloatTensor,
@@ -1485,7 +1523,7 @@ class AdversarialLoss(SetwiseLoss):
         num_entities: int | None = None,
         pos_weights: FloatTensor | None = None,
         neg_weights: FloatTensor | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         # Sanity check
         self._raise_on_weights(pos_weights)
         self._raise_on_weights(neg_weights)
@@ -1505,7 +1543,8 @@ class AdversarialLoss(SetwiseLoss):
         )
 
         # compute weights (without gradient tracking)
-        assert negative_scores.ndimension() == 2
+        if negative_scores.ndimension() != 2:
+            raise ValueError("Expected negative_scores.ndimension() == 2.")
         neg_weights = negative_scores.detach().mul(self.inverse_softmax_temperature).softmax(dim=-1)
 
         # fill negative scores with some finite value, e.g., 0 (they will get masked out anyway)
@@ -1576,7 +1615,10 @@ class NSSALoss(AdversarialLoss):
     name: Self-adversarial negative sampling
     """
 
-    synonyms = {"Self-Adversarial Negative Sampling Loss", "Negative Sampling Self-Adversarial Loss"}
+    synonyms: ClassVar[set[str]] = {
+        "Self-Adversarial Negative Sampling Loss",
+        "Negative Sampling Self-Adversarial Loss",
+    }
 
     hpo_default: ClassVar[Mapping[str, Any]] = {
         "margin": {"type": int, "low": 3, "high": 30, "q": 3},
@@ -1603,25 +1645,23 @@ class NSSALoss(AdversarialLoss):
         super().__init__(reduction=reduction, inverse_softmax_temperature=adversarial_temperature)
         self.margin = margin
 
-    # docstr-coverage: inherited
-    def positive_loss_term(
+    def positive_loss_term(  # noqa: D102
         self,
         pos_scores: FloatTensor,
         label_smoothing: float | None = None,
         num_entities: int | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         # Sanity check
         if label_smoothing:
             raise UnsupportedLabelSmoothingError(self)
         return -self._reduction_method(functional.logsigmoid(self.margin + pos_scores))
 
-    # docstr-coverage: inherited
-    def negative_loss_term_unreduced(
+    def negative_loss_term_unreduced(  # noqa: D102
         self,
         neg_scores: FloatTensor,
         label_smoothing: float | None = None,
         num_entities: int | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         # Sanity check
         if label_smoothing:
             raise UnsupportedLabelSmoothingError(self)
@@ -1644,13 +1684,12 @@ class AdversarialBCEWithLogitsLoss(AdversarialLoss):
     name: Adversarially weighted binary cross entropy (with logits)
     """
 
-    # docstr-coverage: inherited
-    def positive_loss_term(
+    def positive_loss_term(  # noqa: D102
         self,
         pos_scores: FloatTensor,
         label_smoothing: float | None = None,
         num_entities: int | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         return functional.binary_cross_entropy_with_logits(
             pos_scores,
             # TODO: maybe we can make this more efficient?
@@ -1658,13 +1697,12 @@ class AdversarialBCEWithLogitsLoss(AdversarialLoss):
             reduction=self.reduction,
         )
 
-    # docstr-coverage: inherited
-    def negative_loss_term_unreduced(
+    def negative_loss_term_unreduced(  # noqa: D102
         self,
         neg_scores: FloatTensor,
         label_smoothing: float | None = None,
         num_entities: int | None = None,
-    ) -> FloatTensor:  # noqa: D102
+    ) -> FloatTensor:
         return functional.binary_cross_entropy_with_logits(
             neg_scores,
             # TODO: maybe we can make this more efficient?
@@ -1718,7 +1756,7 @@ class FocalLoss(PointwiseLoss):
             class is obtained as 1 - alpha.
             [lin2018]_ recommends to either set this to the inverse class frequency, or treat it as a hyper-parameter.
         :param kwargs:
-            Additional keyword-based arguments passed to :class:`pykeen.losses.PointwiseLoss`.
+            Additional keyword-based arguments passed to :class:`~pykeen.losses.PointwiseLoss`.
         :raises ValueError:
             If alpha is in the wrong range
         """
@@ -1730,7 +1768,6 @@ class FocalLoss(PointwiseLoss):
         self.alpha = alpha
         self.gamma = gamma
 
-    # docstr-coverage: inherited
     def forward(self, x: FloatTensor, target: FloatTensor, weight: FloatTensor | None = None) -> FloatTensor:  # noqa: D102
         p = x.sigmoid()
         ce_loss = functional.binary_cross_entropy_with_logits(x, target, reduction="none")
@@ -1748,15 +1785,15 @@ class FocalLoss(PointwiseLoss):
 
 #: A resolver for loss modules
 loss_resolver: ClassResolver[Loss] = ClassResolver.from_subclasses(
-    Loss,
+    Loss,  # type: ignore[type-abstract]
     default=MarginRankingLoss,
     skip={
-        PairwiseLoss,
-        PointwiseLoss,
-        SetwiseLoss,
+        PairwiseLoss,  # type: ignore[type-abstract]
+        PointwiseLoss,  # type: ignore[type-abstract]
+        SetwiseLoss,  # type: ignore[type-abstract]
         DeltaPointwiseLoss,
         MarginPairwiseLoss,
-        AdversarialLoss,
+        AdversarialLoss,  # type: ignore[type-abstract]
     },
 )
 for _cls in loss_resolver.lookup_dict.values():

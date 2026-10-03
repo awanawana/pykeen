@@ -8,7 +8,7 @@ import logging
 import pathlib
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, TypeAlias, cast
 
 import torch
 from class_resolver.contrib.optuna import pruner_resolver, sampler_resolver
@@ -16,6 +16,7 @@ from optuna import Study, Trial, TrialPruned, create_study
 from optuna.pruners import BasePruner
 from optuna.samplers import BaseSampler
 from optuna.storages import BaseStorage
+from optuna.study import StudyDirection
 
 from ..constants import USER_DEFINED_CODE
 from ..datasets import dataset_resolver, has_dataset
@@ -37,11 +38,15 @@ from ..utils import Result, ensure_ftp_directory, fix_dataclass_init_docs, get_d
 from ..version import get_git_hash, get_version
 
 __all__ = [
-    "hpo_pipeline_from_path",
-    "hpo_pipeline_from_config",
-    "hpo_pipeline",
+    "Direction",
     "HpoPipelineResult",
+    "hpo_pipeline",
+    "hpo_pipeline_from_config",
+    "hpo_pipeline_from_path",
 ]
+
+#: the direction of optimization, cf. :func:`optuna.study.create_study`
+Direction: TypeAlias = Literal["minimize", "maximize"] | StudyDirection
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +73,7 @@ class ExtraKeysError(ValueError):
 class Objective:
     """A dataclass containing all of the information to make an objective function."""
 
-    dataset: None | str | Dataset | type[Dataset]  # 1.
+    dataset: str | Dataset | type[Dataset] | None  # 1.
     model: type[Model]  # 2.
     loss: type[Loss]  # 3.
     optimizer: type[Optimizer]  # 5.
@@ -118,7 +123,7 @@ class Objective:
     # 9. Trackers
     result_tracker_kwargs: Mapping[str, Any] | None = None
     # Misc.
-    device: None | str | torch.device = None
+    device: str | torch.device | None = None
     save_model_directory: str | pathlib.Path | None = None
 
     @staticmethod
@@ -309,11 +314,11 @@ class Objective:
                 use_testing_data=False,  # use validation set during HPO!
                 device=self.device,
             )
-        except (MemoryError, RuntimeError) as e:
+        except (MemoryError, RuntimeError):
             # close run in result tracker
             result_tracker.end_run(success=False)
             # raise the error again (which will be catched in study.optimize)
-            raise e
+            raise
         else:
             if self.save_model_directory:
                 model_directory = pathlib.Path(self.save_model_directory).joinpath(str(trial.number))
@@ -348,7 +353,7 @@ class HpoPipelineResult(Result):
         for k, v in self.study.user_attrs.items():
             if k.startswith("pykeen_"):
                 metadata[k[len("pykeen_") :]] = v
-            elif k in {"metric"}:
+            elif k == "metric":
                 continue
             else:
                 pipeline_config[k] = v
@@ -473,7 +478,7 @@ class HpoPipelineResult(Result):
         :param save_training: Should the training triples be saved?
 
         :raises ValueError:
-            if :data:`"use_testing_data"` is provided in the best pipeline's `config`.
+            if ``"use_testing_data"`` is provided in the best pipeline's `config`.
         """
         config = self._get_best_study_config()
 
@@ -510,7 +515,7 @@ def hpo_pipeline_from_config(config: Mapping[str, Any], **kwargs) -> HpoPipeline
 def hpo_pipeline(
     *,
     # 1. Dataset
-    dataset: None | str | Dataset | type[Dataset] = None,
+    dataset: str | Dataset | type[Dataset] | None = None,
     dataset_kwargs: Mapping[str, Any] | None = None,
     training: Hint[CoreTriplesFactory] = None,
     testing: Hint[CoreTriplesFactory] = None,
@@ -567,20 +572,20 @@ def hpo_pipeline(
     pruner: HintType[BasePruner] = None,
     pruner_kwargs: Mapping[str, Any] | None = None,
     study_name: str | None = None,
-    direction: str | None = None,
+    direction: Direction | None = None,
     load_if_exists: bool = False,
     # Optuna Optimization Settings
     n_trials: int | None = None,
     timeout: int | None = None,
-    gc_after_trial: bool | None = None,
+    gc_after_trial: bool = False,
     n_jobs: int | None = None,
     save_model_directory: str | None = None,
 ) -> HpoPipelineResult:
     """Train a model on the given dataset.
 
     :param dataset:
-        The name of the dataset (a key for the :data:`pykeen.datasets.dataset_resolver`) or the
-        :class:`pykeen.datasets.Dataset` instance. Alternatively, the training triples factory (``training``), testing
+        The name of the dataset (a key for the :data:`~pykeen.datasets.dataset_resolver`) or the
+        :class:`~pykeen.datasets.Dataset` instance. Alternatively, the training triples factory (``training``), testing
         triples factory (``testing``), and validation triples factory (``validation``; optional) can be specified.
     :param dataset_kwargs:
         The keyword arguments passed to the dataset upon instantiation
@@ -593,14 +598,14 @@ def hpo_pipeline(
     :param evaluation_entity_whitelist:
         Optional restriction of evaluation to triples containing *only* these entities. Useful if the downstream task
         is only interested in certain entities, but the relational patterns with other entities improve the entity
-        embedding quality. Passed to :func:`pykeen.pipeline.pipeline`.
+        embedding quality. Passed to :func:`~pykeen.pipeline.pipeline`.
     :param evaluation_relation_whitelist:
         Optional restriction of evaluation to triples containing *only* these relations. Useful if the downstream task
         is only interested in certain relation, but the relational patterns with other relations improve the entity
-        embedding quality. Passed to :func:`pykeen.pipeline.pipeline`.
+        embedding quality. Passed to :func:`~pykeen.pipeline.pipeline`.
 
     :param model:
-        The name of the model or the model class to pass to :func:`pykeen.pipeline.pipeline`
+        The name of the model or the model class to pass to :func:`~pykeen.pipeline.pipeline`
     :param model_kwargs:
         Keyword arguments to pass to the model class on instantiation
     :param model_kwargs_ranges:
@@ -608,7 +613,7 @@ def hpo_pipeline(
         the defaults
 
     :param loss:
-        The name of the loss or the loss class to pass to :func:`pykeen.pipeline.pipeline`
+        The name of the loss or the loss class to pass to :func:`~pykeen.pipeline.pipeline`
     :param loss_kwargs:
         Keyword arguments to pass to the loss on instantiation
     :param loss_kwargs_ranges:
@@ -616,7 +621,7 @@ def hpo_pipeline(
         the defaults
 
     :param regularizer:
-        The name of the regularizer or the regularizer class to pass to :func:`pykeen.pipeline.pipeline`
+        The name of the regularizer or the regularizer class to pass to :func:`~pykeen.pipeline.pipeline`
     :param regularizer_kwargs:
         Keyword arguments to pass to the regularizer on instantiation
     :param regularizer_kwargs_ranges:
@@ -640,12 +645,12 @@ def hpo_pipeline(
 
     :param training_loop:
         The name of the training approach (``'slcwa'`` or ``'lcwa'``) or the training loop class
-        to pass to :func:`pykeen.pipeline.pipeline`
+        to pass to :func:`~pykeen.pipeline.pipeline`
     :param training_loop_kwargs:
         additional keyword-based parameters passed to the training loop upon instantiation.
     :param negative_sampler:
         The name of the negative sampler (``'basic'`` or ``'bernoulli'``) or the negative sampler class
-        to pass to :func:`pykeen.pipeline.pipeline`. Only allowed when training with sLCWA.
+        to pass to :func:`~pykeen.pipeline.pipeline`. Only allowed when training with sLCWA.
     :param negative_sampler_kwargs:
         Keyword arguments to pass to the negative sampler class on instantiation
     :param negative_sampler_kwargs_ranges:
@@ -666,7 +671,7 @@ def hpo_pipeline(
         Keyword arguments to pass to the stopper upon instantiation.
 
     :param evaluator:
-        The name of the evaluator or an evaluator class. Defaults to :class:`pykeen.evaluation.RankBasedEvaluator`.
+        The name of the evaluator or an evaluator class. Defaults to :class:`~pykeen.evaluation.RankBasedEvaluator`.
     :param evaluator_kwargs:
         Keyword arguments to pass to the evaluator on instantiation
     :param evaluation_kwargs:
@@ -791,7 +796,6 @@ def hpo_pipeline(
     negative_sampler_cls: type[NegativeSampler] | None
     if training_loop_cls is SLCWATrainingLoop:
         negative_sampler_cls = negative_sampler_resolver.lookup(negative_sampler)
-        assert negative_sampler_cls is not None
         study.set_user_attr("negative_sampler", negative_sampler_cls.get_normalized_name())
         logger.info(f"Using negative sampler: {negative_sampler_cls}")
     else:
@@ -989,7 +993,7 @@ def suggest_kwargs(
 def suggest_discrete_power_int(trial: Trial, name: str, low: int, high: int, base: int = 2) -> int:
     """Suggest an integer in the given range [2^low, 2^high]."""
     if high <= low:
-        raise Exception(f"Upper bound {high} is not greater than lower bound {low}.")
+        raise ValueError(f"Upper bound {high} is not greater than lower bound {low}.")
     choices = [base**i for i in range(low, high + 1)]
     return cast(int, trial.suggest_categorical(name=name, choices=choices))
 
@@ -997,10 +1001,10 @@ def suggest_discrete_power_int(trial: Trial, name: str, low: int, high: int, bas
 def _set_study_dataset(
     study: Study,
     *,
-    dataset: None | str | Dataset | type[Dataset] = None,
-    training: None | str | CoreTriplesFactory = None,
-    testing: None | str | CoreTriplesFactory = None,
-    validation: None | str | CoreTriplesFactory = None,
+    dataset: str | Dataset | type[Dataset] | None = None,
+    training: str | CoreTriplesFactory | None = None,
+    testing: str | CoreTriplesFactory | None = None,
+    validation: str | CoreTriplesFactory | None = None,
 ):
     if dataset is not None:
         if training is not None or testing is not None or validation is not None:

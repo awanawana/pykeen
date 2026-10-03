@@ -1,7 +1,7 @@
 """Implementation of the R-GCN model."""
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, ClassVar
 
 from class_resolver import Hint, HintOrType
 from torch import nn
@@ -27,13 +27,13 @@ class RGCN(ERModel[FloatTensor, RelationRepresentation, FloatTensor]):
     The Relational Graph Convolutional Network (R-GCN) comprises three parts:
 
     1. A GCN-based entity encoder that computes enriched representations for entities, cf.
-       :class:`pykeen.nn.message_passing.RGCNRepresentations`. The representation for entity $i$ at level
+       :class:`~pykeen.nn.message_passing.RGCNRepresentation`. The representation for entity $i$ at level
        $l \in (1,\dots,L)$ is denoted as $\textbf{e}_i^l$.
        The GCN is modified to use different weights depending on the type of the relation.
     2. Relation representations $\textbf{R}_{r} \in \mathbb{R}^{d \times d}$ is a diagonal matrix that are learned
        independently from the GCN-based encoder.
     3. An arbitrary interaction model which computes the plausibility of facts given the enriched representations,
-       cf. :class:`pykeen.nn.modules.Interaction`.
+       cf. :class:`~pykeen.nn.modules.Interaction`.
 
     Scores for each triple $(h,r,t) \in \mathcal{K}$ are calculated by using the representations in the final level
     of the GCN-based encoder $\textbf{e}_h^L$ and $\textbf{e}_t^L$ along with relation representation $\textbf{R}_{r}$.
@@ -60,12 +60,14 @@ class RGCN(ERModel[FloatTensor, RelationRepresentation, FloatTensor]):
     """
 
     #: The default strategy for optimizing the model's hyper-parameters
-    hpo_default = {
+    hpo_default: ClassVar[Mapping[str, Any]] = {
         "embedding_dim": DEFAULT_EMBEDDING_HPO_EMBEDDING_DIM_RANGE,
         "num_layers": {"type": int, "low": 1, "high": 5, "q": 1},
         "use_bias": {"type": "bool"},
         "activation": {"type": "categorical", "choices": [nn.ReLU, nn.LeakyReLU]},
-        "interaction": {"type": "categorical", "choices": ["distmult", "complex", "ermlp"]},
+        # ERMLP requires interaction_kwargs["embedding_dim"] to match the sampled embedding_dim.
+        # The default HPO search does not provide this dependent parameter (see #1568).
+        "interaction": {"type": "categorical", "choices": ["distmult", "complex"]},
         "edge_dropout": DEFAULT_DROPOUT_HPO_RANGE,
         "self_loop_dropout": DEFAULT_DROPOUT_HPO_RANGE,
         "edge_weighting": {"type": "categorical", "choices": ["inverse_in_degree", "inverse_out_degree", "symmetric"]},

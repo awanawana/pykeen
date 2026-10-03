@@ -4,14 +4,14 @@ import os
 import pathlib
 import sys
 from functools import lru_cache
-from subprocess import CalledProcessError, check_output  # noqa: S404
+from subprocess import CalledProcessError, check_output
 
 __all__ = [
     "VERSION",
-    "get_version",
-    "get_git_hash",
-    "get_git_branch",
     "env",
+    "get_git_branch",
+    "get_git_hash",
+    "get_version",
 ]
 
 VERSION = "1.11.2-dev"
@@ -46,8 +46,8 @@ def get_git_branch() -> str | None:
 def _run(*args: str) -> str | None:
     with pathlib.Path(os.devnull).open("w") as devnull:
         try:
-            ret = check_output(  # noqa: S603,S607
-                args,  # noqa:S603
+            ret = check_output(  # noqa: S603
+                args,
                 cwd=pathlib.Path(__file__).parent,
                 stderr=devnull,
             )
@@ -88,6 +88,8 @@ def env_table(tablefmt: str = "github", headers: tuple[str, str] = ("Key", "Valu
         ("CUDA Available?", str(torch.cuda.is_available()).lower()),
         ("CUDA Version", torch.version.cuda or "N/A"),
         ("cuDNN Version", torch.backends.cudnn.version() or "N/A"),
+        ("MPS Built?", str(torch.backends.mps.is_built()).lower()),
+        ("MPS Available?", str(torch.backends.mps.is_available()).lower()),
     ]
     return tabulate(rows, tablefmt=tablefmt, headers=headers)
 
@@ -108,7 +110,7 @@ def env(file=None):
     """
     if _in_jupyter():
         return env_html()
-    print(env_table(), file=file)  # noqa:T201
+    print(env_table(), file=file)
     return None
 
 
@@ -116,10 +118,10 @@ def _in_jupyter() -> bool:
     try:
         get_ipython = sys.modules["IPython"].get_ipython
         if "IPKernelApp" not in get_ipython().config:
-            raise ImportError("console")
+            raise ImportError("console")  # noqa:TRY301
         if "VSCODE_PID" in os.environ:
-            raise ImportError("vscode")
-    except Exception:
+            raise ImportError("vscode")  # noqa:TRY301
+    except Exception:  # noqa: BLE001 -- any failure means "not in Jupyter"
         return False
     else:
         return True

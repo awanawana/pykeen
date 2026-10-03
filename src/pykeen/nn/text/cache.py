@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from itertools import chain
 from textwrap import dedent
-from typing import Any, Literal, cast
+from typing import Any, ClassVar, Literal, cast
 
 import more_itertools
 import requests
@@ -21,12 +21,11 @@ from ...utils import nested_get
 from ...version import get_version
 
 __all__ = [
-    "text_cache_resolver",
-    "TextCache",
-    # Concrete classes
     "IdentityCache",
     "PyOBOTextCache",
+    "TextCache",
     "WikidataTextCache",
+    "text_cache_resolver",
 ]
 
 
@@ -51,12 +50,11 @@ class IdentityCache(TextCache):
     Mostly used for testing.
     """
 
-    # docstr-coverage: inherited
     def get_texts(self, identifiers: Sequence[str]) -> Sequence[str | None]:  # noqa: D102
         return identifiers
 
 
-PYOBO_PREFIXES_WARNED = set()
+PYOBO_PREFIXES_WARNED: set[str] = set()
 
 
 class PyOBOTextCache(TextCache):
@@ -117,9 +115,9 @@ class WikidataTextCache(TextCache):
     """A cache for requests against Wikidata's SPARQL endpoint."""
 
     #: Wikidata SPARQL endpoint. See https://www.wikidata.org/wiki/Wikidata:SPARQL_query_service#Interfacing
-    WIKIDATA_ENDPOINT = "https://query.wikidata.org/bigdata/namespace/wdq/sparql"
+    WIKIDATA_ENDPOINT: ClassVar[str] = "https://query.wikidata.org/bigdata/namespace/wdq/sparql"
 
-    HEADERS: dict[str, str] = {
+    HEADERS: ClassVar[dict[str, str | bytes | None]] = {
         # cf. https://meta.wikimedia.org/wiki/User-Agent_policy
         "User-Agent": (
             f"PyKEEN-Bot/{get_version()} (https://pykeen.github.io; pykeen2019@gmail.com) "
@@ -220,13 +218,10 @@ class WikidataTextCache(TextCache):
         )
         result = {}
         for entry in res_json:
-            wikidata_id = nested_get(entry, "item", "value", default="")
-            assert isinstance(wikidata_id, str)  # for mypy
+            wikidata_id: str = nested_get(entry, "item", "value", default="")
             wikidata_id = wikidata_id.rsplit("/", maxsplit=1)[-1]
-            label = nested_get(entry, "itemLabel", "value", default="")
-            assert isinstance(label, str)  # for mypy
-            description = nested_get(entry, "itemDescription", "value", default="")
-            assert isinstance(description, str)  # for mypy
+            label: str = nested_get(entry, "itemLabel", "value", default="")
+            description: str = nested_get(entry, "itemDescription", "value", default="")
             result[wikidata_id] = {"label": label, "description": description}
         return result
 
@@ -271,9 +266,11 @@ class WikidataTextCache(TextCache):
         w_to_i = {wikidata_id: i for i, wikidata_id in enumerate(ids)}
         for wikidata_id, entry in entries.items():
             result[w_to_i[wikidata_id]] = entry[component]
-        # for mypy
-        for item in result:
-            assert isinstance(item, str)
+        still_missing = [
+            wikidata_id for wikidata_id, item in zip(ids, result, strict=True) if not isinstance(item, str)
+        ]
+        if still_missing:
+            raise ValueError(f"Could not retrieve {component} for Wikidata IDs: {still_missing}")
         return cast(Sequence[str], result)
 
     def get_texts(self, identifiers: Sequence[str]) -> Sequence[str]:
@@ -313,4 +310,4 @@ class WikidataTextCache(TextCache):
 
 
 #: A resolver for text caches
-text_cache_resolver: ClassResolver[TextCache] = ClassResolver.from_subclasses(base=TextCache)
+text_cache_resolver: ClassResolver[TextCache] = ClassResolver.from_subclasses(base=TextCache)  # type: ignore[type-abstract]

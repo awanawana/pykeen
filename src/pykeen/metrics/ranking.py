@@ -12,61 +12,61 @@ These metrics directly operate on the ranks:
 
 The following metrics measures summarize the central tendency of ranks
 
-- :class:`pykeen.metrics.ranking.ArithmeticMeanRank`
-- :class:`pykeen.metrics.ranking.GeometricMeanRank`
-- :class:`pykeen.metrics.ranking.HarmonicMeanRank`
-- :class:`pykeen.metrics.ranking.MedianRank`
+- :class:`~pykeen.metrics.ranking.ArithmeticMeanRank`
+- :class:`~pykeen.metrics.ranking.GeometricMeanRank`
+- :class:`~pykeen.metrics.ranking.HarmonicMeanRank`
+- :class:`~pykeen.metrics.ranking.MedianRank`
 
 The Hits at K metric is closely related to information retrieval and measures the fraction of times when the correct
 result is in the top-$k$ ranked entries, i.e., the rank is at most $k$
 
-- :class:`pykeen.metrics.ranking.HitsAtK`
+- :class:`~pykeen.metrics.ranking.HitsAtK`
 
 The next metrics summarize the dispersion of ranks
 
-- :class:`pykeen.metrics.ranking.MedianAbsoluteDeviation`
-- :class:`pykeen.metrics.ranking.Variance`
-- :class:`pykeen.metrics.ranking.StandardDeviation`
+- :class:`~pykeen.metrics.ranking.MedianAbsoluteDeviation`
+- :class:`~pykeen.metrics.ranking.Variance`
+- :class:`~pykeen.metrics.ranking.StandardDeviation`
 
 and finally there is a simple metric to store the number of ranks which where aggregated
 
-- :class:`pykeen.metrics.ranking.Count`
+- :class:`~pykeen.metrics.ranking.Count`
 
 Inverse Metrics
 ---------------
 The inverse metrics are reciprocals of the central tendency measures. They offer the advantage of having a fixed value
 range of $(0, 1]$, with a known optimal value of $1$:
 
-- :class:`pykeen.metrics.ranking.InverseArithmeticMeanRank`
-- :class:`pykeen.metrics.ranking.InverseGeometricMeanRank`
-- :class:`pykeen.metrics.ranking.InverseHarmonicMeanRank`
-- :class:`pykeen.metrics.ranking.InverseMedianRank`
+- :class:`~pykeen.metrics.ranking.InverseArithmeticMeanRank`
+- :class:`~pykeen.metrics.ranking.InverseGeometricMeanRank`
+- :class:`~pykeen.metrics.ranking.InverseHarmonicMeanRank`
+- :class:`~pykeen.metrics.ranking.InverseMedianRank`
 
 Adjusted Metrics
 ----------------
 Adjusted metrics build upon base metrics, but adjust them for chance, cf. [berrendorf2020]_ and [hoyt2022]_. All
-adjusted metrics derive from :class:`pykeen.metrics.ranking.DerivedRankBasedMetric` and, for a given evaluation set,
+adjusted metrics derive from :class:`~pykeen.metrics.ranking.DerivedRankBasedMetric` and, for a given evaluation set,
 are affine transformations of the base metric with dataset-dependent, but fixed transformation constants. Thus, they
 can also be computed when the model predictions are not available anymore, but the evaluation set is known.
 
 Expectation-Normalized Metrics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 These metrics divide the metric by its expected value under random ordering. Thus, their expected value is always 1
-irrespective of the evaluation set. They derive from :class:`pykeen.metrics.ranking.ExpectationNormalizedMetric`, and
+irrespective of the evaluation set. They derive from :class:`~pykeen.metrics.ranking.ExpectationNormalizedMetric`, and
 there is currently only a single implementation:
 
-- :class:`pykeen.metrics.ranking.AdjustedArithmeticMeanRank`
+- :class:`~pykeen.metrics.ranking.AdjustedArithmeticMeanRank`
 
 Re-indexed Metrics
 ~~~~~~~~~~~~~~~~~~
 Re-indexed metrics subtract the expected value, and then normalize the optimal value to be 1. Thus, their expected value
 under random ordering is 0, their optimal value is 1, and larger values indicate better results. The classes derive from
-:class:`pykeen.metrics.ranking.ReindexedMetric`, and the following implementations are available:
+:class:`~pykeen.metrics.ranking.ReindexedMetric`, and the following implementations are available:
 
-- :class:`pykeen.metrics.ranking.AdjustedHitsAtK`
-- :class:`pykeen.metrics.ranking.AdjustedArithmeticMeanRankIndex`
-- :class:`pykeen.metrics.ranking.AdjustedGeometricMeanRankIndex`
-- :class:`pykeen.metrics.ranking.AdjustedInverseHarmonicMeanRank`
+- :class:`~pykeen.metrics.ranking.AdjustedHitsAtK`
+- :class:`~pykeen.metrics.ranking.AdjustedArithmeticMeanRankIndex`
+- :class:`~pykeen.metrics.ranking.AdjustedGeometricMeanRankIndex`
+- :class:`~pykeen.metrics.ranking.AdjustedInverseHarmonicMeanRank`
 
 z-Adjusted Metrics
 ~~~~~~~~~~~~~~~~~~
@@ -75,12 +75,12 @@ to normalize the metrics similar to `z-score normalization <https://en.wikipedia
 The z-score normalized metrics have an expected value of 0, and a variance of 1, and positive values indicate better
 results. While their value range is unbound, it can be interpreted through the lens of the inverse cumulative
 density function of the standard Gaussian distribution to retrieve a *p*-value. The classes derive from
-:class:`pykeen.metrics.ranking.ZMetric`, and the following implementations are available:
+:class:`~pykeen.metrics.ranking.ZMetric`, and the following implementations are available:
 
-- :class:`pykeen.metrics.ranking.ZArithmeticMeanRank`
-- :class:`pykeen.metrics.ranking.ZGeometricMeanRank`
-- :class:`pykeen.metrics.ranking.ZHitsAtK`
-- :class:`pykeen.metrics.ranking.ZInverseHarmonicMeanRank`
+- :class:`~pykeen.metrics.ranking.ZArithmeticMeanRank`
+- :class:`~pykeen.metrics.ranking.ZGeometricMeanRank`
+- :class:`~pykeen.metrics.ranking.ZHitsAtK`
+- :class:`~pykeen.metrics.ranking.ZInverseHarmonicMeanRank`
 """
 
 import math
@@ -107,52 +107,43 @@ from .utils import (
 from ..typing import RANK_REALISTIC, RANK_TYPES, RankType
 
 __all__ = [
-    "rank_based_metric_resolver",
-    # Base classes
-    "RankBasedMetric",
-    "DerivedRankBasedMetric",
-    "ExpectationNormalizedMetric",
-    "ReindexedMetric",
-    "ZMetric",
-    # Concrete classes
-    "ArithmeticMeanRank",
-    "AdjustedArithmeticMeanRank",
-    "AdjustedArithmeticMeanRankIndex",
-    "ZArithmeticMeanRank",
-    "InverseArithmeticMeanRank",
-    #
-    "GeometricMeanRank",
-    "AdjustedGeometricMeanRankIndex",
-    "ZGeometricMeanRank",
-    "InverseGeometricMeanRank",
-    #
-    "HarmonicMeanRank",
-    "InverseHarmonicMeanRank",
-    "AdjustedInverseHarmonicMeanRank",
-    "ZInverseHarmonicMeanRank",
-    #
-    "MedianRank",
-    "InverseMedianRank",
-    #
-    "HitsAtK",
-    "AdjustedHitsAtK",
-    "ZHitsAtK",
-    #
-    "StandardDeviation",
-    "Variance",
-    "Count",
-    # Misc
-    "NoClosedFormError",
-    "generate_ranks",
-    "generate_num_candidates_and_ranks",
-    "generalized_harmonic_numbers",
-    "AffineTransformationParameters",
-    "harmonic_variances",
-    #
+    "EPSILON",
     "HITS_METRICS",
     "WEIGHTED_MEDIAN_SCALE",
-    "EPSILON",
+    "AdjustedArithmeticMeanRank",
+    "AdjustedArithmeticMeanRankIndex",
+    "AdjustedGeometricMeanRankIndex",
+    "AdjustedHitsAtK",
+    "AdjustedInverseHarmonicMeanRank",
+    "AffineTransformationParameters",
+    "ArithmeticMeanRank",
+    "Count",
+    "DerivedRankBasedMetric",
+    "ExpectationNormalizedMetric",
+    "GeometricMeanRank",
+    "HarmonicMeanRank",
+    "HitsAtK",
+    "InverseArithmeticMeanRank",
+    "InverseGeometricMeanRank",
+    "InverseHarmonicMeanRank",
+    "InverseMedianRank",
+    "MedianRank",
+    "NoClosedFormError",
     "NoWeightSupportError",
+    "RankBasedMetric",
+    "ReindexedMetric",
+    "StandardDeviation",
+    "Variance",
+    "ZArithmeticMeanRank",
+    "ZGeometricMeanRank",
+    "ZHitsAtK",
+    "ZInverseHarmonicMeanRank",
+    "ZMetric",
+    "generalized_harmonic_numbers",
+    "generate_num_candidates_and_ranks",
+    "generate_ranks",
+    "harmonic_variances",
+    "rank_based_metric_resolver",
 ]
 
 #: A small value to help avoid dividing by zero
@@ -166,7 +157,7 @@ WEIGHTED_MEDIAN_SCALE = 0.67449
 def generate_ranks(
     num_candidates: np.ndarray,
     prefix_shape: tuple[int, ...] = (),
-    seed: None | int | np.random.Generator = None,
+    seed: int | np.random.Generator | None = None,
     dtype: type[np.number] | None = None,
 ) -> np.ndarray:
     """
@@ -570,10 +561,9 @@ class DerivedRankBasedMetric(RankBasedMetric, ABC):
         """
         self.base = rank_based_metric_resolver.make(base_cls or self.base_cls, pos_kwargs=kwargs)
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         if num_candidates is None:
             raise ValueError(f"{self.__class__.__name__} requires number of candidates.")
         return self.adjust(
@@ -604,14 +594,13 @@ class DerivedRankBasedMetric(RankBasedMetric, ABC):
         parameters = self.get_coefficients(num_candidates=num_candidates, weights=weights)
         return parameters.scale * base_metric_result + parameters.offset
 
-    # docstr-coverage: inherited
-    def expected_value(
+    def expected_value(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         # since scale and offset are constant for a given number of candidates, we have
         # E[scale * M + offset] = scale * E[M] + offset
         return self.adjust(
@@ -622,14 +611,13 @@ class DerivedRankBasedMetric(RankBasedMetric, ABC):
             weights=weights,
         )
 
-    # docstr-coverage: inherited
-    def variance(
+    def variance(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         # since scale and offset are constant for a given number of candidates, we have
         # V[scale * M + offset] = scale^2 * V[M]
         parameters = self.get_coefficients(num_candidates=num_candidates, weights=weights)
@@ -710,10 +698,9 @@ class ZMetric(DerivedRankBasedMetric):
     closed_expectation: ClassVar[bool] = True
     closed_variance: ClassVar[bool] = True
 
-    # docstr-coverage: inherited
-    def get_coefficients(
+    def get_coefficients(  # noqa: D102
         self, num_candidates: np.ndarray, weights: np.ndarray | None = None
-    ) -> AffineTransformationParameters:  # noqa: D102
+    ) -> AffineTransformationParameters:
         mean = self.base.expected_value(num_candidates=num_candidates, weights=weights)
         std = self.base.std(num_candidates=num_candidates, weights=weights)
         scale = _safe_divide(1.0, std)
@@ -722,25 +709,23 @@ class ZMetric(DerivedRankBasedMetric):
         offset = -scale * mean
         return AffineTransformationParameters(scale=scale, offset=offset)
 
-    # docstr-coverage: inherited
-    def expected_value(
+    def expected_value(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         # should be exactly 0.0
         return 0.0  # centered
 
-    # docstr-coverage: inherited
-    def variance(
+    def variance(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         # should be exactly 1.0
         return 1.0  # re-scaled
 
@@ -764,22 +749,20 @@ class ExpectationNormalizedMetric(DerivedRankBasedMetric):
 
     closed_expectation: ClassVar[bool] = True
 
-    # docstr-coverage: inherited
-    def get_coefficients(
+    def get_coefficients(  # noqa: D102
         self, num_candidates: np.ndarray, weights: np.ndarray | None = None
-    ) -> AffineTransformationParameters:  # noqa: D102
+    ) -> AffineTransformationParameters:
         return AffineTransformationParameters(
             scale=_safe_divide(1, self.base.expected_value(num_candidates=num_candidates, weights=weights))
         )
 
-    # docstr-coverage: inherited
-    def expected_value(
+    def expected_value(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         return 1.0  # centered
 
 
@@ -806,23 +789,21 @@ class ReindexedMetric(DerivedRankBasedMetric):
     supported_rank_types = (RANK_REALISTIC,)
     closed_expectation: ClassVar[bool] = True
 
-    # docstr-coverage: inherited
-    def get_coefficients(
+    def get_coefficients(  # noqa: D102
         self, num_candidates: np.ndarray, weights: np.ndarray | None = None
-    ) -> AffineTransformationParameters:  # noqa: D102
+    ) -> AffineTransformationParameters:
         mean = self.base.expected_value(num_candidates=num_candidates, weights=weights)
         scale = _safe_divide(1.0, 1.0 - mean)
         offset = -scale * mean
         return AffineTransformationParameters(scale=scale, offset=offset)
 
-    # docstr-coverage: inherited
-    def expected_value(
+    def expected_value(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         # should be exactly 0.0
         return 0.0
 
@@ -858,7 +839,7 @@ class ArithmeticMeanRank(RankBasedMetric):
     For the expected value, assuming each individual rank $r_i$ follows a discrete uniform
     distribution $\mathcal{U}(1, C_i)$, where $C_i$ denotes the number of candidates for
     ranking task $i$, we have $\mathbb{E}[r_i] = \frac{C_i + 1}{2}$ and thus by the
-    linearity of the expectation (see :func:`pykeen.metrics.utils.weighted_mean_expectation`):
+    linearity of the expectation (see :func:`~pykeen.metrics.utils.weighted_mean_expectation`):
 
     .. math::
 
@@ -869,7 +850,7 @@ class ArithmeticMeanRank(RankBasedMetric):
     For the variance, assuming independent ranks with individual variances
     $\mathbb{V}[r_i] = \frac{C_i^2 - 1}{12}$, we use the quadratic weight scaling
     (from $\mathbb{V}[c \cdot X] = c^2 \cdot \mathbb{V}[X]$) as implemented in
-    :func:`pykeen.metrics.utils.weighted_mean_variance`:
+    :func:`~pykeen.metrics.utils.weighted_mean_variance`:
 
     .. math::
 
@@ -893,7 +874,7 @@ class ArithmeticMeanRank(RankBasedMetric):
         \mathbb{V}[MR] &= \frac{C^2 - 1}{12n}
 
     ---
-    link: https://pykeen.readthedocs.io/en/stable/tutorial/understanding_evaluation.html#mean-rank
+    link: https://pykeen.readthedocs.io/en/stable/explanation/understanding_evaluation.html#mean-rank
     description: The arithmetic mean over all ranks.
     """
 
@@ -905,32 +886,29 @@ class ArithmeticMeanRank(RankBasedMetric):
     closed_expectation: ClassVar[bool] = True
     closed_variance: ClassVar[bool] = True
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         return np.average(np.asanyarray(ranks), weights=weights).item()
 
-    # docstr-coverage: inherited
-    def expected_value(
+    def expected_value(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         num_candidates = np.asanyarray(num_candidates)
         individual_expectation = 0.5 * (num_candidates + 1)
         return weighted_mean_expectation(individual=individual_expectation, weights=weights)
 
-    # docstr-coverage: inherited
-    def variance(
+    def variance(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         num_candidates = np.asanyarray(num_candidates)
         individual_variance = (num_candidates**2 - 1) / 12.0
         return weighted_mean_variance(individual=individual_variance, weights=weights)
@@ -966,10 +944,9 @@ class InverseArithmeticMeanRank(RankBasedMetric):
     synonyms: ClassVar[Collection[str]] = ("iamr",)
     supports_weights = True
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         return np.reciprocal(np.average(np.asanyarray(ranks), weights=weights)).item()
 
 
@@ -1035,10 +1012,9 @@ class GeometricMeanRank(RankBasedMetric):
     closed_expectation: ClassVar[bool] = True
     closed_variance: ClassVar[bool] = True
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         return stats.gmean(ranks, weights=weights).item()
 
     @staticmethod
@@ -1049,14 +1025,13 @@ class GeometricMeanRank(RankBasedMetric):
         safe_total = np.clip(total, a_min=np.finfo(weights.dtype).eps, a_max=None)
         return weights / safe_total
 
-    # docstr-coverage: inherited
-    def expected_value(
+    def expected_value(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         alpha = self._normalize_weights(weights, n=len(num_candidates))
 
         # E[G] = Product( E[ X_i^alpha_i ] )
@@ -1065,14 +1040,13 @@ class GeometricMeanRank(RankBasedMetric):
 
         return np.exp(log_expectation)
 
-    # docstr-coverage: inherited
-    def variance(
+    def variance(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         alpha = self._normalize_weights(weights, n=len(num_candidates))
 
         # 1. Calculate Log of First Moment E[G]
@@ -1126,10 +1100,9 @@ class InverseGeometricMeanRank(RankBasedMetric):
     synonyms: ClassVar[Collection[str]] = ("igmr",)
     supports_weights = True
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         return np.reciprocal(stats.gmean(ranks, weights=weights)).item()
 
 
@@ -1177,10 +1150,9 @@ class HarmonicMeanRank(RankBasedMetric):
     synonyms: ClassVar[Collection[str]] = ("hmr",)
     supports_weights = True
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         return weighted_harmonic_mean(a=ranks, weights=weights).item()
 
 
@@ -1318,34 +1290,31 @@ class InverseHarmonicMeanRank(RankBasedMetric):
     closed_expectation: ClassVar[bool] = True
     closed_variance: ClassVar[bool] = True
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         return np.reciprocal(weighted_harmonic_mean(a=ranks, weights=weights)).item()
 
-    # docstr-coverage: inherited
-    def expected_value(
+    def expected_value(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         num_candidates = np.asanyarray(num_candidates)
         n = num_candidates.max().item()
         expectation = generalized_harmonic_numbers(n, p=-1.0) / np.arange(1, n + 1)
         individual = expectation[num_candidates - 1]
         return weighted_mean_expectation(individual, weights)
 
-    # docstr-coverage: inherited
-    def variance(
+    def variance(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         num_candidates = np.asanyarray(num_candidates)
         n = num_candidates.max().item()
         individual = harmonic_variances(n)[num_candidates - 1]
@@ -1428,7 +1397,7 @@ class MedianRank(RankBasedMetric):
             \text{and} \quad \sum_{r_i \geq m} w_i \geq \frac{1}{2} \sum_j w_j
 
     The weighted median generalizes the standard median: when all weights are equal, it reduces to the unweighted
-    median. The implementation uses PyKEEN's :func:`weighted_median` utility function.
+    median. The implementation uses PyKEEN's :func:`~pykeen.metrics.utils.weighted_median` utility function.
 
     **Expected Value (Unweighted Case)**
 
@@ -1478,23 +1447,21 @@ class MedianRank(RankBasedMetric):
     closed_expectation: ClassVar[bool] = True
     closed_variance: ClassVar[bool] = True
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         if weights is None:
             return np.median(ranks).item()
 
         return weighted_median(a=ranks, weights=weights).item()
 
-    # docstr-coverage: inherited
-    def expected_value(
+    def expected_value(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         # weighted case is equivalent to Subset Sum Problem (~NP complete)
         if weights is not None:
             return super().expected_value(
@@ -1508,10 +1475,9 @@ class MedianRank(RankBasedMetric):
         # We slice [:-1] because the array goes up to x=k_max, and P(M > k_max) is 0.
         return np.sum(sf[:-1])
 
-    # docstr-coverage: inherited
-    def variance(
+    def variance(  # noqa: D102
         self, num_candidates: np.ndarray, num_samples: int | None = None, weights: np.ndarray | None = None, **kwargs
-    ) -> float:  # noqa: D102
+    ) -> float:
         # weighted case is equivalent to Subset Sum Problem (~NP complete)
         if weights is not None:
             return super().variance(num_candidates=num_candidates, num_samples=num_samples, weights=weights, **kwargs)
@@ -1546,10 +1512,9 @@ class InverseMedianRank(RankBasedMetric):
     increasing = True
     supports_weights = True
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         return np.reciprocal(weighted_median(a=ranks, weights=weights), dtype=float).item()
 
 
@@ -1568,7 +1533,7 @@ class StandardDeviation(RankBasedMetric):
     where $\bar{r} = \frac{1}{W} \sum_{i=1}^{n} w_i r_i$ is the weighted mean.
 
     ---
-    link: https://pykeen.readthedocs.io/en/stable/tutorial/understanding_evaluation.html
+    link: https://pykeen.readthedocs.io/en/stable/explanation/understanding_evaluation.html
     """
 
     name = "Standard Deviation (std)"
@@ -1577,10 +1542,9 @@ class StandardDeviation(RankBasedMetric):
     synonyms: ClassVar[Collection[str]] = ("rank_std", "std")
     supports_weights: ClassVar[bool] = True
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         ranks = np.asanyarray(ranks)
         if weights is None:
             return ranks.std().item()
@@ -1607,10 +1571,11 @@ class Variance(RankBasedMetric):
     .. note::
 
         This computes the variance of the **observed weighted sample**, not the variance of the weighted mean
-        (which is computed by :func:`weighted_mean_variance` and used in metric expected value/variance calculations).
+        (which is computed by :func:`~pykeen.metrics.utils.weighted_mean_variance` and used in metric expected
+        value/variance calculations).
 
     ---
-    link: https://pykeen.readthedocs.io/en/stable/tutorial/understanding_evaluation.html
+    link: https://pykeen.readthedocs.io/en/stable/explanation/understanding_evaluation.html
     """
 
     name = "Variance"
@@ -1619,10 +1584,9 @@ class Variance(RankBasedMetric):
     synonyms: ClassVar[Collection[str]] = ("rank_var", "var")
     supports_weights: ClassVar[bool] = True
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         ranks = np.asanyarray(ranks)
         if weights is None:
             return ranks.var().item()
@@ -1652,7 +1616,7 @@ class MedianAbsoluteDeviation(RankBasedMetric):
     ``scale='normal'``.
 
     ---
-    link: https://pykeen.readthedocs.io/en/stable/tutorial/understanding_evaluation.html
+    link: https://pykeen.readthedocs.io/en/stable/explanation/understanding_evaluation.html
     """
 
     name = "Median Absolute Deviation (MAD)"
@@ -1661,10 +1625,9 @@ class MedianAbsoluteDeviation(RankBasedMetric):
     synonyms: ClassVar[Collection[str]] = ("rank_mad", "mad")
     supports_weights = True
 
-    # docstr-coverage: inherited
     def __call__(
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         if weights is None:
             return stats.median_abs_deviation(ranks, scale="normal").item()
 
@@ -1700,10 +1663,9 @@ class Count(RankBasedMetric):
     synonyms: ClassVar[Collection[str]] = ("rank_count",)
     supports_weights: ClassVar[bool] = False
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         # TODO: should we return the sum of weights?
         if weights is not None:
             raise NoWeightSupportError(
@@ -1770,7 +1732,7 @@ class HitsAtK(RankBasedMetric):
 
     ---
     description: The relative frequency of ranks not larger than a given k.
-    link: https://pykeen.readthedocs.io/en/stable/tutorial/understanding_evaluation.html#hits-k
+    link: https://pykeen.readthedocs.io/en/stable/explanation/understanding_evaluation.html#hits-k
     """
 
     name = "Hits @ K"
@@ -1791,43 +1753,38 @@ class HitsAtK(RankBasedMetric):
         super().__init__()
         self.k = k
 
-    # docstr-coverage: inherited
     def iter_extra_repr(self) -> Iterable[str]:  # noqa: D102
         yield from super().iter_extra_repr()
         yield f"k={self.k}"
 
-    # docstr-coverage: inherited
-    def __call__(
+    def __call__(  # noqa: D102
         self, ranks: np.ndarray, num_candidates: np.ndarray | None = None, weights: np.ndarray | None = None
-    ) -> float:  # noqa: D102
+    ) -> float:
         return np.average(np.less_equal(ranks, self.k), weights=weights).item()
 
-    # docstr-coverage: inherited
     @property
     def key(self) -> str:  # noqa: D102
         return super().key[:-1] + str(self.k)
 
-    # docstr-coverage: inherited
-    def expected_value(
+    def expected_value(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         num_candidates = np.asanyarray(num_candidates, dtype=float)
         # for each individual ranking task, we have I[r_i <= k] ~ Bernoulli(k/C_i)
         individual = np.minimum(self.k / num_candidates, 1.0)
         return weighted_mean_expectation(individual=individual, weights=weights)
 
-    # docstr-coverage: inherited
-    def variance(
+    def variance(  # noqa: D102
         self,
         num_candidates: np.ndarray,
         num_samples: int | None = None,
         weights: np.ndarray | None = None,
         **kwargs,
-    ) -> float:  # noqa: D102
+    ) -> float:
         # for each individual ranking task, we have I[r_i <= k] ~ Bernoulli(k/C_i)
         num_candidates = np.asanyarray(num_candidates, dtype=float)
         p = np.minimum(self.k / num_candidates, 1.0)
@@ -1941,9 +1898,9 @@ class AdjustedGeometricMeanRankIndex(ReindexedMetric):
 
 
 rank_based_metric_resolver: ClassResolver[RankBasedMetric] = ClassResolver.from_subclasses(
-    base=RankBasedMetric,
+    base=RankBasedMetric,  # type: ignore[type-abstract]
     default=InverseHarmonicMeanRank,  # mrr
-    skip={ExpectationNormalizedMetric, ReindexedMetric, ZMetric, DerivedRankBasedMetric},
+    skip={ExpectationNormalizedMetric, ReindexedMetric, ZMetric, DerivedRankBasedMetric},  # type: ignore[type-abstract]
 )
 """The rank-based metric resolver allows for the lookup and instantiation of classes
 deriving from :class:`RankBasedMetric` via the :mod:`class_resolver`.

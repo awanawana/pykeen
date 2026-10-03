@@ -47,11 +47,9 @@ from ..typing import BoolTensor, FloatTensor, LongTensor, OneOrSequence
 from ..utils import get_edge_index, upgrade_to_sequence
 
 __all__ = [
-    # abstract
-    "MessagePassingRepresentation",
-    # concrete classes
-    "SimpleMessagePassingRepresentation",
     "FeaturizedMessagePassingRepresentation",
+    "MessagePassingRepresentation",
+    "SimpleMessagePassingRepresentation",
     "TypedMessagePassingRepresentation",
 ]
 
@@ -206,12 +204,10 @@ class MessagePassingRepresentation(Representation, ABC):
         #   * replace base representations
         #   * keep layers & activations
 
-    # docstr-coverage: inherited
-    def _plain_forward(self, indices: LongTensor | None = None) -> FloatTensor:  # noqa: D102
+    def _plain_forward(self, indices: LongTensor | None = None) -> FloatTensor:
         if self.restrict_k_hop and indices is not None:
             # we can restrict the message passing to the k-hop neighborhood of the desired indices;
             # this does only make sense if we do not request *all* indices
-            assert k_hop_subgraph is not None
             # k_hop_subgraph returns:
             # (1) the nodes involved in the subgraph
             # (2) the filtered edge_index connectivity
@@ -270,7 +266,6 @@ class SimpleMessagePassingRepresentation(MessagePassingRepresentation):
     name: Simple Message Passing
     """
 
-    # docstr-coverage: inherited
     def pass_messages(self, x: FloatTensor, edge_index: LongTensor, edge_mask: BoolTensor | None = None) -> FloatTensor:  # noqa: D102
         for layer, activation in zip(self.layers, self.activations, strict=False):
             x = activation(layer(x, edge_index=edge_index))
@@ -299,7 +294,8 @@ class TypedMessagePassingRepresentation(MessagePassingRepresentation):
         """Initialize the representation.
 
         :param triples_factory: The factory comprising the training triples used for message passing
-        :param kwargs: Additional keyword-based parameters passed to :class:`pykeen.nn.pyg.MessagePassingRepresentation`
+        :param kwargs: Additional keyword-based parameters passed to
+            :class:`~pykeen.nn.pyg.MessagePassingRepresentation`
         """
         super().__init__(triples_factory=triples_factory, **kwargs)
         # register an additional buffer for the categorical edge type
@@ -316,7 +312,6 @@ class TypedMessagePassingRepresentation(MessagePassingRepresentation):
             return self.edge_type
         return self.edge_type[edge_mask]
 
-    # docstr-coverage: inherited
     def pass_messages(self, x: FloatTensor, edge_index: LongTensor, edge_mask: BoolTensor | None = None) -> FloatTensor:  # noqa: D102
         edge_type = self._get_edge_type(edge_mask=edge_mask)
         for layer, activation in zip(self.layers, self.activations, strict=False):
@@ -363,7 +358,7 @@ class FeaturizedMessagePassingRepresentation(TypedMessagePassingRepresentation):
         :param relation_transformation: An optional transformation to apply to the relation representations after each
             message passing step. If ``None``, do not modify the representations.
         :param kwargs: Additional keyword-based parameters passed to
-            :class:`pykeen.nn.pyg.TypedMessagePassingRepresentation`, except the ``triples_factory``.
+            :class:`~pykeen.nn.pyg.TypedMessagePassingRepresentation`, except the ``triples_factory``.
         """
         super().__init__(triples_factory=triples_factory, **kwargs)
 
@@ -375,7 +370,6 @@ class FeaturizedMessagePassingRepresentation(TypedMessagePassingRepresentation):
         )
         self.relation_transformation = relation_transformation
 
-    # docstr-coverage: inherited
     def pass_messages(self, x: FloatTensor, edge_index: LongTensor, edge_mask: BoolTensor | None = None) -> FloatTensor:  # noqa: D102
         edge_type = self._get_edge_type(edge_mask=edge_mask)
         # get initial relation representations

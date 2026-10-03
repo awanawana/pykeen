@@ -51,7 +51,7 @@ class BoxE(
     }
 
     loss_default = NSSALoss
-    loss_default_kwargs = {"margin": 3, "adversarial_temperature": 2.0, "reduction": "sum"}
+    loss_default_kwargs: ClassVar[Mapping[str, Any]] = {"margin": 3, "adversarial_temperature": 2.0, "reduction": "sum"}
 
     def __init__(
         self,
@@ -84,12 +84,12 @@ class BoxE(
             and numerically more stable.
 
         :param entity_initializer:
-            Entity initializer function. Defaults to :func:`pykeen.nn.init.uniform_norm_`
+            Entity initializer function. Defaults to :func:`~pykeen.nn.init.uniform_norm_`
         :param entity_initializer_kwargs:
             Keyword arguments to be used when calling the entity initializer
 
         :param relation_initializer:
-            Relation initializer function. Defaults to :func:`pykeen.nn.init.uniform_norm_`
+            Relation initializer function. Defaults to :func:`~pykeen.nn.init.uniform_norm_`
         :param relation_initializer_kwargs:
             Keyword arguments to be used when calling the relation initializer
         :param relation_size_initializer:

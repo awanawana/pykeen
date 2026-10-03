@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import ftplib
 import functools
+import io
 import itertools as itt
 import json
 import logging
@@ -23,10 +24,11 @@ from io import BytesIO
 from pathlib import Path
 from textwrap import dedent
 from typing import (
+    IO,
     Any,
     Generic,
-    TextIO,
     TypeVar,
+    cast,
     overload,
 )
 
@@ -42,75 +44,94 @@ from torch import nn
 from typing_extensions import ParamSpec
 
 from .constants import PYKEEN_BENCHMARKS
-from .typing import BoolTensor, DeviceHint, FloatTensor, LongTensor, MappedTriples, TorchRandomHint
+from .typing import (
+    LABEL_HEAD,
+    LABEL_RELATION,
+    LABEL_TAIL,
+    BoolTensor,
+    DeviceHint,
+    FloatTensor,
+    HeadRepresentation,
+    LongTensor,
+    MappedTriples,
+    RelationRepresentation,
+    TailRepresentation,
+    Target,
+    TorchRandomHint,
+)
 from .version import get_git_hash
 
 __all__ = [
-    "at_least_eps",
-    "broadcast_upgrade_to_sequences",
-    "compose",
-    "clamp_norm",
-    "compact_mapping",
-    "create_relation_to_entity_set_mapping",
-    "ensure_complex",
-    "ensure_torch_random_state",
-    "format_relative_comparison",
-    "invert_mapping",
-    "random_non_negative_int",
-    "resolve_device",
-    "split_complex",
-    "normalize_string",
-    "get_until_first_blank",
-    "flatten_dictionary",
-    "set_random_seed",
+    "Bias",
+    "ExtraReprMixin",
     "NoRandomSeedNecessary",
     "Result",
-    "fix_dataclass_init_docs",
-    "get_benchmark",
-    "upgrade_to_sequence",
-    "ensure_tuple",
-    "unpack_singletons",
-    "extend_batch",
-    "check_shapes",
     "all_in_bounds",
-    "view_complex",
-    "combine_complex",
-    "get_model_io",
-    "get_json_bytes_io",
-    "get_df_io",
-    "ensure_ftp_directory",
-    "get_batchnorm_modules",
-    "get_dropout_modules",
-    "calculate_broadcasted_elementwise_result_shape",
-    "estimate_cost_of_sequence",
-    "get_optimal_sequence",
-    "tensor_sum",
-    "tensor_product",
-    "negative_norm_of_sum",
-    "negative_norm",
-    "project_entity",
-    "get_expected_norm",
-    "Bias",
-    "complex_normalize",
-    "lp_norm",
-    "powersum_norm",
-    "get_devices",
-    "get_preferred_device",
-    "triple_tensor_to_set",
-    "is_triple_tensor_subset",
-    "logcumsumexp",
-    "get_connected_components",
-    "normalize_path",
-    "get_edge_index",
-    "prepare_filter_triples",
-    "nested_get",
-    "rate_limited",
-    "ExtraReprMixin",
-    "einsum",
-    "isin_many_dim",
-    "split_workload",
+    "at_least_eps",
     "batched_dot",
+    "broadcast_index_shapes",
+    "broadcast_upgrade_to_sequences",
+    "calculate_broadcasted_elementwise_result_shape",
+    "check_shapes",
+    "clamp_norm",
+    "combine_complex",
+    "compact_mapping",
+    "complex_normalize",
+    "compose",
+    "create_relation_to_entity_set_mapping",
+    "einsum",
+    "ensure_complex",
+    "ensure_ftp_directory",
+    "ensure_torch_random_state",
+    "ensure_tuple",
+    "estimate_cost_of_sequence",
+    "extend_batch",
+    "fix_dataclass_init_docs",
+    "flatten_dictionary",
+    "format_relative_comparison",
+    "get_batchnorm_modules",
+    "get_benchmark",
+    "get_connected_components",
+    "get_devices",
+    "get_df_io",
+    "get_dropout_modules",
+    "get_edge_index",
+    "get_expected_norm",
+    "get_json_bytes_io",
+    "get_model_io",
+    "get_optimal_sequence",
+    "get_preferred_device",
+    "get_until_first_blank",
+    "invert_mapping",
+    "is_triple_tensor_subset",
+    "isin_many_dim",
+    "logcumsumexp",
+    "lp_norm",
     "merge_kwargs",
+    "negative_norm",
+    "negative_norm_of_sum",
+    "nested_get",
+    "normalize_path",
+    "normalize_string",
+    "pad_trailing_dims",
+    "parallel_prefix_unsqueeze",
+    "powersum_norm",
+    "prefix_unsqueeze_target",
+    "prepare_filter_triples",
+    "project_entity",
+    "random_non_negative_int",
+    "rate_limited",
+    "resolve_device",
+    "set_random_seed",
+    "split_complex",
+    "split_workload",
+    "tensor_product",
+    "tensor_sum",
+    "triple_tensor_to_set",
+    "unpack_singletons",
+    "upgrade_to_sequence",
+    "view_complex",
+    "view_complex_native",
 ]
 
 logger = logging.getLogger(__name__)
@@ -137,9 +158,12 @@ def resolve_device(device: DeviceHint = None) -> torch.device:
         device = "cuda"
     if isinstance(device, str):
         device = torch.device(device)
-    if not torch.cuda.is_available() and device.type == "cuda":
+    if device.type == "cuda" and not torch.cuda.is_available():
+        device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        logger.warning(f"No CUDA devices were available. The model runs on {device.type}.")
+    if device.type == "mps" and not torch.backends.mps.is_available():
         device = torch.device("cpu")
-        logger.warning("No cuda devices were available. The model runs on CPU")
+        logger.warning("MPS was not available. The model runs on CPU")
     return device
 
 
@@ -181,14 +205,20 @@ def get_preferred_device(module: nn.Module, allow_ambiguity: bool = True) -> tor
 
 
 def get_until_first_blank(s: str) -> str:
-    """Recapitulate all lines in the string until the first blank line."""
-    lines = list(s.splitlines())
-    try:
-        m, _ = min(enumerate(lines), key=lambda line: line == "")
-    except ValueError:
-        return s
-    else:
-        return " ".join(line.lstrip() for line in lines[: m + 2])
+    """Recapitulate all lines in the string until the first blank line.
+
+    Lines consisting only of whitespace count as blank. Leading blank lines are skipped, such that for docstrings
+    starting with a line break, the first paragraph is returned. Each line is stripped of surrounding whitespace,
+    and the lines are joined by single spaces.
+
+    :param s:
+        the string, e.g., a docstring
+
+    :return:
+        the first paragraph, joined into a single line
+    """
+    lines = (line.strip() for line in s.splitlines())
+    return " ".join(itt.takewhile(bool, itt.dropwhile(lambda line: not line, lines)))
 
 
 def flatten_dictionary(
@@ -209,7 +239,7 @@ def _flatten_dictionary(
     """Help flatten a nested dictionary."""
     result = {}
     for k, v in dictionary.items():
-        new_prefix = prefix + (k,)
+        new_prefix = (*prefix, k)
         if isinstance(v, dict):
             result.update(_flatten_dictionary(dictionary=v, prefix=new_prefix))
         else:
@@ -221,7 +251,7 @@ def clamp_norm(
     x: torch.Tensor,
     maxnorm: float,
     p: str | int = "fro",
-    dim: None | int | Iterable[int] = None,
+    dim: int | Iterable[int] | None = None,
 ) -> torch.Tensor:
     """Ensure that a tensor's norm does not exceeds some threshold.
 
@@ -318,7 +348,10 @@ def is_cudnn_error(runtime_error: RuntimeError) -> bool:
 def compact_mapping(
     mapping: Mapping[X, int],
 ) -> tuple[Mapping[X, int], Mapping[int, int]]:
-    """Update a mapping (key -> id) such that the IDs range from 0 to len(mappings) - 1.
+    """Update a mapping (key -> id) such that the IDs range from 0 to (number of unique IDs) - 1.
+
+    The relative order of IDs is preserved, i.e., if ``old_i < old_j`` then ``new_i < new_j``. The mapping does not
+    need to be injective; keys sharing the same old ID will share the same new ID.
 
     :param mapping:
         The mapping to compact.
@@ -326,7 +359,7 @@ def compact_mapping(
     :return: A pair (translated, translation)
         where translated is the updated mapping, and translation a dictionary from old to new ids.
     """
-    translation = {old_id: new_id for new_id, old_id in enumerate(sorted(mapping.values()))}
+    translation = {old_id: new_id for new_id, old_id in enumerate(sorted(set(mapping.values())))}
     translated = {k: translation[v] for k, v in mapping.items()}
     return translated, translation
 
@@ -361,14 +394,92 @@ def split_complex(
 
 
 def view_complex(x: FloatTensor) -> torch.Tensor:
-    """Convert a PyKEEN complex tensor representation into a torch one."""
-    real, imag = split_complex(x=x)
-    return torch.complex(real=real, imag=imag)
+    """Convert a PyKEEN complex tensor representation into a torch one.
+
+    PyKEEN stores complex tensors of shape ``(*, d)`` as real tensors of shape ``(*, 2 * d)``, where the last
+    dimension contains interleaved pairs of real and imaginary part, i.e., the layout of :func:`torch.view_as_real`
+    after flattening the last two dimensions.
+
+    :param x: shape: ``(*, 2 * d)``
+        the real-valued tensor. If it is already complex, it is returned unchanged.
+
+    :return: shape: ``(*, d)``
+        the complex tensor. It shares memory with ``x`` whenever the strides permit it; otherwise, it is a copy.
+
+    :raises ValueError:
+        if the last dimension of a real-valued input is not even.
+    :raises TypeError:
+        if a real-valued input's dtype is not supported, cf. :func:`view_complex_native`.
+    """
+    if x.is_complex():
+        return x
+    return _real_to_complex(x)
+
+
+#: the real dtypes supported by :func:`torch.view_as_complex`
+_VIEW_AS_COMPLEX_DTYPES = frozenset({torch.float16, torch.float32, torch.float64})
+
+
+def _is_complex_viewable(x: torch.Tensor) -> bool:
+    """Check whether :func:`torch.view_as_complex` can view a tensor of shape ``(*, 2)`` without copying.
+
+    This mirrors the checks performed by :func:`torch.view_as_complex`: the last dimension needs stride 1, and all
+    other strides as well as the storage offset have to be divisible by 2 (irrespective of the dimensions' sizes).
+    """
+    return x.stride(-1) == 1 and x.storage_offset() % 2 == 0 and all(s % 2 == 0 for s in x.stride()[:-1])
+
+
+def _real_to_complex(x: FloatTensor) -> torch.Tensor:
+    """View a real tensor with interleaved real/imaginary parts as a complex tensor.
+
+    :param x: shape: ``(*, 2 * d)``
+        The real tensor, where the last dimension contains ``d`` interleaved pairs of real and imaginary parts.
+
+    :return: shape: ``(*, d)``
+        The complex tensor. It shares memory with ``x`` whenever the strides permit it; otherwise, it is a copy.
+
+    :raises TypeError:
+        If the dtype of ``x`` is not one of ``float16``, ``float32``, or ``float64``, which are the dtypes supported by
+        :func:`torch.view_as_complex`.
+    :raises ValueError:
+        If the last dimension of ``x`` is not even.
+    """
+    if x.dtype not in _VIEW_AS_COMPLEX_DTYPES:
+        raise TypeError(
+            f"Cannot interpret a tensor of dtype {x.dtype} as interleaved real and imaginary parts; only "
+            f"{', '.join(sorted(map(str, _VIEW_AS_COMPLEX_DTYPES)))} are supported.",
+        )
+    if x.ndim == 0 or x.shape[-1] % 2:
+        raise ValueError(
+            f"Cannot interpret a real tensor of shape {tuple(x.shape)} as complex: the last dimension must be even, "
+            f"since it holds interleaved pairs of real and imaginary parts.",
+        )
+    # reshape only copies if a view is impossible
+    x = x.reshape(*x.shape[:-1], x.shape[-1] // 2, 2)
+    if not _is_complex_viewable(x):
+        x = x.contiguous()
+    return torch.view_as_complex(x)
 
 
 def view_complex_native(x: FloatTensor) -> torch.Tensor:
-    """Convert a PyKEEN complex tensor representation into a torch one using :func:`torch.view_as_complex`."""
-    return torch.view_as_complex(x.view(*x.shape[:-1], -1, 2))
+    """Convert a PyKEEN complex tensor representation into a torch one using :func:`torch.view_as_complex`.
+
+    In contrast to :func:`view_complex`, the input has to be real-valued.
+
+    :param x: shape: ``(*, 2 * d)``
+        the real-valued tensor, where the last dimension contains ``d`` interleaved pairs of real and imaginary parts.
+
+    :return: shape: ``(*, d)``
+        the complex tensor. It shares memory with ``x`` whenever the strides permit it; otherwise, e.g., for some
+        non-contiguous inputs, it is a copy.
+
+    :raises TypeError:
+        if the dtype of ``x`` is not one of ``float16``, ``float32``, or ``float64``, which are the dtypes supported by
+        :func:`torch.view_as_complex`. In particular, complex inputs are rejected.
+    :raises ValueError:
+        if the last dimension of ``x`` is not even.
+    """
+    return _real_to_complex(x)
 
 
 def combine_complex(
@@ -492,8 +603,59 @@ def calculate_broadcasted_elementwise_result_shape(
     first: tuple[int, ...],
     second: tuple[int, ...],
 ) -> tuple[int, ...]:
-    """Determine the return shape of a broadcasted elementwise operation."""
-    return tuple(max(a, b) for a, b in zip(first, second, strict=False))
+    """Determine the return shape of a broadcasted elementwise operation.
+
+    Follows the same (right-aligned) semantics as :func:`torch.broadcast_shapes`: the shorter shape is padded with
+    leading singleton dimensions, and a dimension of size 1 broadcasts to the other size (including 0).
+
+    :param first:
+        the first shape
+    :param second:
+        the second shape
+
+    :raises ValueError:
+        if the shapes are not broadcastable
+
+    :return:
+        the broadcasted shape
+    """
+    # pad the shorter shape with leading singleton dimensions
+    diff = len(first) - len(second)
+    padded_first = (1,) * -diff + tuple(first) if diff < 0 else first
+    padded_second = (1,) * diff + tuple(second) if diff > 0 else second
+    result = []
+    for a, b in zip(padded_first, padded_second, strict=True):
+        if a == b or b == 1:
+            result.append(a)
+        elif a == 1:
+            result.append(b)
+        else:
+            raise ValueError(f"Shapes {tuple(first)} and {tuple(second)} are not broadcastable.")
+    return tuple(result)
+
+
+def pad_trailing_dims(x: torch.Tensor, ndim: int) -> torch.Tensor:
+    """Append singleton dimensions until the tensor has the given number of dimensions.
+
+    This is useful for tensors which are aligned from the *left*, e.g., index tensors whose batch dimensions come
+    first, since :mod:`torch` broadcasts from the right.
+
+    :param x:
+        the tensor
+    :param ndim:
+        the desired number of dimensions; must be at least `x.ndim`
+
+    :raises ValueError:
+        if the tensor already has more than the desired number of dimensions
+
+    :return:
+        the tensor with trailing singleton dimensions appended
+    """
+    if ndim < x.ndim:
+        raise ValueError(f"Cannot reduce a tensor of shape {tuple(x.shape)} to {ndim} dimensions.")
+    if ndim == x.ndim:
+        return x
+    return x.view(*x.shape, *(1,) * (ndim - x.ndim))
 
 
 def estimate_cost_of_sequence(
@@ -506,7 +668,7 @@ def estimate_cost_of_sequence(
             np.prod,
             itt.islice(
                 itt.accumulate(
-                    (shape,) + other_shapes,
+                    (shape, *other_shapes),
                     calculate_broadcasted_elementwise_result_shape,
                 ),
                 1,
@@ -629,7 +791,8 @@ def negative_norm(
         The scores.
     """
     if power_norm:
-        assert not isinstance(p, str)
+        if isinstance(p, str):
+            raise TypeError(f"power_norm requires a numeric p, but got {p!r}.")
         return -(x.abs() ** p).sum(dim=-1)
 
     return -x.norm(p=p, dim=-1)
@@ -791,7 +954,8 @@ def extend_batch(
         ids = torch.arange(max_id, device=batch.device)
     if ids.ndimension() < 2:
         ids = ids.unsqueeze(dim=0)
-    assert ids.ndimension() == 2
+    if ids.ndimension() != 2:
+        raise ValueError("Expected ids.ndimension() == 2.")
 
     # normalize batch -> batch.shape: (batch_size, 1, 3)
     batch = batch.unsqueeze(dim=1)
@@ -969,8 +1133,7 @@ def complex_normalize(x: torch.Tensor) -> torch.Tensor:
         "root cause.",
         stacklevel=2,
     )
-    (x_complex,) = ensure_complex(x)
-    x_complex = complex_normalize(x_complex)
+    x_complex = complex_normalize(_real_to_complex(x))
     x_real = torch.view_as_real(x_complex)
     return x_real.view(x.shape)
 
@@ -1051,24 +1214,31 @@ def make_ones_like(prefix: Sequence) -> Sequence[int]:
     return [1 for _ in prefix]
 
 
-def logcumsumexp(a: np.ndarray) -> np.ndarray:
-    """Compute ``log(cumsum(exp(a)))``.
+def logcumsumexp(a: np.ndarray, axis: int | None = None) -> np.ndarray:
+    """Compute ``log(cumsum(exp(a), axis=axis))`` in a numerically stable way.
+
+    The computation uses :data:`numpy.logaddexp` via :meth:`numpy.ufunc.accumulate`, i.e., each prefix is reduced
+    stably on its own. Hence, there is no underflow for prefixes whose values are much smaller than the global maximum,
+    and ``-inf`` entries (``exp(-inf) = 0``) are handled correctly.
+
+    The ``axis`` semantics follow :func:`numpy.cumsum`.
 
     :param a: shape: s
         the array
+    :param axis: the axis along which to accumulate. If ``None`` (the default), the array is flattened first, like for
+        :func:`numpy.cumsum`.
 
-    :return: shape s
+    :return: shape: ``(prod(s),)`` if ``axis`` is ``None``, else ``s``
         the log-cumsum-exp of the array
 
     .. seealso ::
         :func:`scipy.special.logsumexp` and :func:`torch.logcumsumexp`
     """
-    a_max = np.amax(a)
-    tmp = np.exp(a - a_max)
-    s = np.cumsum(tmp)
-    out = np.log(s)
-    out += a_max
-    return out
+    a = np.asarray(a)
+    if axis is None:
+        a = a.ravel()
+        axis = 0
+    return np.logaddexp.accumulate(a, axis=axis)
 
 
 def find(x: X, parent: MutableMapping[X, X]) -> X:
@@ -1076,10 +1246,16 @@ def find(x: X, parent: MutableMapping[X, X]) -> X:
     # check validity
     if x not in parent:
         raise ValueError(f"Unknown element: {x}.")
-    # path compression
-    while parent[x] != x:
-        x, parent[x] = parent[x], parent[parent[x]]
-    return x
+    # find root
+    root = x
+    while parent[root] != root:
+        root = parent[root]
+    # path compression: make every node on the path point directly to the root
+    while x != root:
+        next_x = parent[x]
+        parent[x] = root
+        x = next_x
+    return root
 
 
 def get_connected_components(pairs: Iterable[tuple[X, X]]) -> Collection[Collection[X]]:
@@ -1110,14 +1286,14 @@ def get_connected_components(pairs: Iterable[tuple[X, X]]) -> Collection[Collect
             x, y = y, x
         # merge
         parent[y] = x
-    # extract partitions
+    # extract partitions; note: parent[k] is not necessarily the root, hence we need to use find
     result = defaultdict(list)
-    for k, v in parent.items():
-        result[v].append(k)
+    for k in parent:
+        result[find(x=k, parent=parent)].append(k)
     return list(result.values())
 
 
-PathType = str | pathlib.Path | TextIO
+PathType = str | pathlib.Path | IO[str] | IO[bytes]
 
 
 def normalize_path(
@@ -1142,7 +1318,7 @@ def normalize_path(
         the default to use if path is None
 
     :raises TypeError:
-        if `path` is of unsuitable type
+        if `path` is of unsuitable type, or a file handle without a usable file name, e.g., :class:`io.StringIO`
     :raises ValueError:
         if `path` and `default` are both `None`
 
@@ -1153,8 +1329,17 @@ def normalize_path(
         if default is None:
             raise ValueError("If no default is provided, path cannot be None.")
         path = default
-    if isinstance(path, TextIO):
-        path = path.name
+    if isinstance(path, io.IOBase):
+        # file handles, e.g., from open(); note that `typing.IO` cannot be used for isinstance checks
+        name = getattr(path, "name", None)
+        if isinstance(name, bytes):
+            name = os.fsdecode(name)
+        if not isinstance(name, str):
+            raise TypeError(
+                f"Cannot determine a path for file handle {path!r}, since it does not have a name attribute of "
+                f"type str (got {name!r}). Only handles to files on disk, e.g., from open(), are supported.",
+            )
+        path = name
     if isinstance(path, str):
         path = pathlib.Path(path)
     if not isinstance(path, pathlib.Path):
@@ -1176,21 +1361,30 @@ def ensure_complex(*xs: torch.Tensor) -> Iterable[torch.Tensor]:
     """
     Ensure that all tensors are of complex dtype.
 
-    Reshape and convert if necessary.
+    Real tensors of shape ``(*, 2 * d)`` are interpreted as ``d`` interleaved pairs of real and imaginary parts, and
+    converted to complex tensors of shape ``(*, d)``.
 
     :param xs:
         the tensors
 
     :yields: complex tensors.
+
+    :raises ValueError:
+        if a real tensor's last dimension is not even
+    :raises TypeError:
+        if a real tensor's dtype is not supported, cf. :func:`view_complex_native`
     """
     for x in xs:
         if x.is_complex():
             yield x
             continue
-        warnings.warn(f"{x=} is not complex, but will be viewed as such", stacklevel=2)
-        if x.shape[-1] != 2:
-            x = x.view(*x.shape[:-1], -1, 2)
-        yield torch.view_as_complex(x)
+        # note: keep the message constant, such that the default warning filter only shows it once per call site
+        warnings.warn(
+            "Received a non-complex tensor; it will be viewed as complex by interpreting its last dimension as "
+            "interleaved pairs of real and imaginary parts.",
+            stacklevel=2,
+        )
+        yield _real_to_complex(x)
 
 
 def _weisfeiler_lehman_iteration(
@@ -1416,7 +1610,7 @@ def get_edge_index(
 
 def prepare_filter_triples(
     mapped_triples: MappedTriples,
-    additional_filter_triples: None | MappedTriples | list[MappedTriples] = None,
+    additional_filter_triples: MappedTriples | list[MappedTriples] | None = None,
     warn: bool = True,
 ) -> MappedTriples:
     """Prepare the filter triples from the evaluation triples, and additional filter triples."""
@@ -1525,25 +1719,46 @@ class ExtraReprMixin:
         """
         return ", ".join(self.iter_extra_repr())
 
-    def __repr__(self) -> str:  # noqa: D105
+    def __repr__(self) -> str:
         return f"{self.__class__.__name__}({self.extra_repr()})"
 
 
 try:
     from opt_einsum import contract
 
-    einsum = functools.partial(contract, backend="torch")
+    _einsum_impl = functools.partial(contract, backend="torch")
     logger.info("Using opt_einsum")
 except ImportError:
-    einsum = torch.einsum
+    _einsum_impl = torch.einsum
+
+
+def einsum(*args, **kwargs):
+    """Compute an Einstein summation, using ``opt_einsum`` as a backend if it is installed."""
+    return _einsum_impl(*args, **kwargs)
 
 
 def isin_many_dim(elements: torch.Tensor, test_elements: torch.Tensor, dim: int = 0) -> BoolTensor:
-    """Return whether elements are contained in test elements."""
-    inverse, counts = torch.cat([elements, test_elements], dim=dim).unique(
-        return_counts=True, return_inverse=True, dim=dim
-    )[1:]
-    return counts[inverse[: elements.shape[dim]]] > 1
+    """Return whether elements are contained in test elements.
+
+    :param elements:
+        the elements to check
+    :param test_elements:
+        the test elements; must have the same shape as `elements` except along `dim`
+    :param dim:
+        the dimension along which the individual elements are stacked
+
+    :return: shape: (elements.shape[dim],)
+        a boolean mask indicating for each element whether it occurs in `test_elements`.
+        Duplicates in either input are handled correctly.
+    """
+    num_elements = elements.shape[dim]
+    if num_elements == 0 or test_elements.shape[dim] == 0:
+        return torch.zeros(num_elements, dtype=torch.bool, device=elements.device)
+    unique, inverse = torch.cat([elements, test_elements], dim=dim).unique(return_inverse=True, dim=dim)
+    # mark each unique group which contains (at least) one test element; duplicates just re-set the same flag
+    contains_test = torch.zeros(unique.shape[dim], dtype=torch.bool, device=elements.device)
+    contains_test[inverse[num_elements:]] = True
+    return contains_test[inverse[:num_elements]]
 
 
 def determine_maximum_batch_size(batch_size: int | None, device: torch.device, maximum_batch_size: int) -> int:
@@ -1586,14 +1801,13 @@ def add_cudnn_error_hint(func: Callable[P, X]) -> Callable[P, X]:
         a decorated function
     """
 
-    # docstr-coverage: excused `wrapped`
     @functools.wraps(func)
     def wrapped(*args: P.args, **kwargs: P.kwargs) -> X:
         try:
             return func(*args, **kwargs)
         except RuntimeError as e:
             if not is_cudnn_error(e):
-                raise e
+                raise
             raise RuntimeError(
                 "\nThis code crash might have been caused by a CUDA bug, see "
                 "https://github.com/allenai/allennlp/issues/2888, "
@@ -1605,18 +1819,22 @@ def add_cudnn_error_hint(func: Callable[P, X]) -> Callable[P, X]:
 
 
 def split_workload(n: int) -> range:
-    """Split workload for multi-processing."""
+    """Split workload for multi-processing.
+
+    :param n: the total number of work items
+    :returns: the range of work items for the current data loader worker. If not in a worker process, this is
+        ``range(n)``; otherwise, the ranges of all workers form an exact, contiguous partition of ``range(n)``.
+    """
     # cf. https://pytorch.org/docs/stable/data.html#torch.utils.data.IterableDataset
     worker_info = torch.utils.data.get_worker_info()
     if worker_info is None:  # single-process data loading, return the full iterator
-        workload = range(n)
-    else:
-        num_workers = worker_info.num_workers
-        worker_id = worker_info.id  # 1-based
-        start = math.ceil(n / num_workers * worker_id)
-        stop = math.ceil(n / num_workers * (worker_id + 1))
-        workload = range(start, stop)
-    return workload
+        return range(n)
+    num_workers = worker_info.num_workers
+    worker_id = worker_info.id  # 0-based
+    # use exact integer arithmetic to avoid floating point rounding issues
+    start = n * worker_id // num_workers
+    stop = n * (worker_id + 1) // num_workers
+    return range(start, stop)
 
 
 def batched_dot(a: FloatTensor, b: FloatTensor) -> FloatTensor:
@@ -1659,12 +1877,10 @@ def circular_correlation(a: FloatTensor, b: FloatTensor) -> FloatTensor:
     return torch.fft.irfft(p_fft, n=a.shape[-1], dim=-1)
 
 
-# docstr-coverage:excused `overload`
 @overload
 def merge_kwargs(kwargs: Sequence[OptionalKwargs], **extra_kwargs: Any | None) -> Sequence[OptionalKwargs]: ...
 
 
-# docstr-coverage:excused `overload`
 @overload
 def merge_kwargs(kwargs: OptionalKwargs, **extra_kwargs: Any | None) -> OptionalKwargs: ...
 
@@ -1697,3 +1913,74 @@ def merge_kwargs(kwargs: OneOrManyOptionalKwargs, **extra_kwargs: Any | None) ->
             raise ValueError(f"Found inconsistency for {key=} : {extra_kwargs[key]=} vs. {kwargs[key]=}")
         kwargs[key] = value
     return kwargs
+
+
+def broadcast_index_shapes(shapes: Iterable[tuple[int, ...]]) -> tuple[int, ...]:
+    """Determine the common shape of the given index shapes.
+
+    :param shapes: the shapes of the index tensors; they must have the same number of
+        dimensions, cf. :func:`~pykeen.utils.pad_trailing_dims`
+
+    :returns: the broadcasted shape
+
+    :raises ValueError: if the shapes are not broadcastable
+    """
+    # note: this is equivalent to torch.broadcast_shapes for equal-ndim shapes, but about an order of magnitude
+    # faster, and scoring constructs one batch per call
+    materialized = list(shapes)
+    result = []
+    for sizes in zip(*materialized, strict=True):
+        if len(set(sizes) - {1}) > 1:
+            raise ValueError(f"Cannot broadcast index shapes {materialized}")
+        result.append(max(sizes))
+    return tuple(result)
+
+
+@overload
+def parallel_prefix_unsqueeze(x: Sequence[FloatTensor], ndim: int) -> Sequence[FloatTensor]: ...
+
+
+@overload
+def parallel_prefix_unsqueeze(x: FloatTensor, ndim: int) -> FloatTensor: ...
+
+
+def parallel_prefix_unsqueeze(x: FloatTensor | Sequence[FloatTensor], ndim: int) -> FloatTensor | Sequence[FloatTensor]:
+    """Prepend the given number of singleton dimensions to all representations."""
+    # note: a single view adds all leading singleton dimensions at once; prepending them is always
+    # stride-expressible, so this works for non-contiguous (e.g., transposed or expanded) inputs, too
+    prefix = (1,) * ndim
+    if not isinstance(x, Sequence):
+        return x.view(prefix + x.shape)
+    return cast(Sequence[FloatTensor], [xx.view(prefix + xx.shape) for xx in x])
+
+
+def prefix_unsqueeze_target(
+    target: Target,
+    ndim: int,
+    h: HeadRepresentation,
+    r: RelationRepresentation,
+    t: TailRepresentation,
+) -> tuple[HeadRepresentation, RelationRepresentation, TailRepresentation]:
+    """Prepend batch dimensions to the target's representations.
+
+    When the same candidates are scored for each batch element, the target's representations are looked up once,
+    with shape ``(num, *dims)``. They need the batch dimensions prepended to broadcast against the other two
+    positions, which have shape ``(*batch_shape, 1, *dims)``.
+
+    :param target: the target position
+    :param ndim: the number of batch dimensions to prepend
+    :param h: the head representations
+    :param r: the relation representations
+    :param t: the tail representations
+
+    :raises ValueError: if the target is invalid
+
+    :return: the representations, with the target's ones unsqueezed
+    """
+    if target == LABEL_HEAD:
+        return parallel_prefix_unsqueeze(h, ndim=ndim), r, t
+    if target == LABEL_RELATION:
+        return h, parallel_prefix_unsqueeze(r, ndim=ndim), t
+    if target == LABEL_TAIL:
+        return h, r, parallel_prefix_unsqueeze(t, ndim=ndim)
+    raise ValueError(f"Unknown target={target}")

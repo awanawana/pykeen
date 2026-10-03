@@ -1,13 +1,14 @@
 """Combination strategies for entity alignment datasets."""
 
+import itertools
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, ClassVar, Generic, NamedTuple, TypeVar
 
-import numpy
-import pandas
+import numpy as np
+import pandas as pd
 import torch
 from class_resolver import ClassResolver
 from pandas.api.types import is_numeric_dtype, is_string_dtype
@@ -27,15 +28,12 @@ from ...typing import (
 from ...utils import format_relative_comparison, get_connected_components
 
 __all__ = [
-    # Abstract class
-    "GraphPairCombinator",
-    # Concrete classes
-    "DisjointGraphPairCombinator",
-    "SwapGraphPairCombinator",
-    "ExtraRelationGraphPairCombinator",
     "CollapseGraphPairCombinator",
-    # Data Structures
+    "DisjointGraphPairCombinator",
+    "ExtraRelationGraphPairCombinator",
+    "GraphPairCombinator",
     "ProcessedTuple",
+    "SwapGraphPairCombinator",
 ]
 
 logger = logging.getLogger(__name__)
@@ -107,11 +105,9 @@ def merge_label_to_id_mapping(
     for i, (prefix, mapping) in enumerate(pairs):
         for key, value in mapping.items():
             key = f"{prefix}:{key}"
-            if offsets is None:
-                # for mypy
-                assert mappings is not None
+            if mappings is not None:
                 value = mappings[i][value]
-            else:
+            elif offsets is not None:
                 value = value + offsets[i].item()
             value_to_keys[value].add(key)
     if extra:
@@ -120,7 +116,7 @@ def merge_label_to_id_mapping(
     # reconstruct label-to-id
     result: dict[str, int] = {}
     for value, keys in value_to_keys.items():
-        key = list(keys)[0] if len(keys) == 1 else str(set(keys))
+        key = next(iter(keys)) if len(keys) == 1 else str(set(keys))
         result[key] = value
     return result
 
@@ -171,7 +167,7 @@ def merge_label_to_id_mappings(
 
 
 def filter_map_alignment(
-    alignment: pandas.DataFrame,
+    alignment: pd.DataFrame,
     left: CoreTriplesFactory,
     right: CoreTriplesFactory,
     entity_offsets: LongTensor,
@@ -206,7 +202,7 @@ def filter_map_alignment(
 
     # filter alignment
     invalid_mask = (alignment.to_numpy() < 0).any(axis=1) | (
-        alignment.to_numpy() >= numpy.reshape(numpy.asarray([left.num_entities, right.num_entities]), newshape=(1, 2))
+        alignment.to_numpy() >= np.reshape(np.asarray([left.num_entities, right.num_entities]), (1, 2))
     ).any(axis=1)
     if invalid_mask.any():
         logger.warning(
@@ -264,14 +260,14 @@ class ProcessedTuple(NamedTuple):
 FactoryType = TypeVar("FactoryType", CoreTriplesFactory, TriplesFactory)
 
 
-class GraphPairCombinator(Generic[FactoryType], ABC):
+class GraphPairCombinator(ABC, Generic[FactoryType]):
     """A base class for combination of a graph pair into a single graph."""
 
     def __call__(
         self,
         left: FactoryType,
         right: FactoryType,
-        alignment: pandas.DataFrame,
+        alignment: pd.DataFrame,
         **kwargs,
     ) -> tuple[FactoryType, LongTensor]:
         """
@@ -342,13 +338,12 @@ class GraphPairCombinator(Generic[FactoryType], ABC):
 class DisjointGraphPairCombinator(GraphPairCombinator[FactoryType]):
     """This combinator keeps both graphs as disconnected components."""
 
-    # docstr-coverage: inherited
-    def process(
+    def process(  # noqa: D102
         self,
         mapped_triples: MappedTriples,
         alignment: LongTensor,
         offsets: LongTensor,
-    ) -> ProcessedTuple:  # noqa: D102
+    ) -> ProcessedTuple:
         return ProcessedTuple(
             mapped_triples,
             alignment,
@@ -359,13 +354,12 @@ class DisjointGraphPairCombinator(GraphPairCombinator[FactoryType]):
 class SwapGraphPairCombinator(GraphPairCombinator[FactoryType]):
     """Add extra triples by swapping aligned entities."""
 
-    # docstr-coverage: inherited
-    def process(
+    def process(  # noqa: D102
         self,
         mapped_triples: MappedTriples,
         alignment: LongTensor,
         offsets: LongTensor,
-    ) -> ProcessedTuple:  # noqa: D102
+    ) -> ProcessedTuple:
         # add swap triples
         # e1 ~ e2 => (e1, r, t) ~> (e2, r, t), or (h, r, e1) ~> (h, r, e2)
         # create dense entity remapping for swap
@@ -398,13 +392,12 @@ class ExtraRelationGraphPairCombinator(GraphPairCombinator[FactoryType]):
     #: the name of the additional alignment relation
     ALIGNMENT_RELATION_NAME: ClassVar[str] = "same-as"
 
-    # docstr-coverage: inherited
-    def process(
+    def process(  # noqa: D102
         self,
         mapped_triples: MappedTriples,
         alignment: LongTensor,
         offsets: LongTensor,
-    ) -> ProcessedTuple:  # noqa: D102
+    ) -> ProcessedTuple:
         # add alignment triples with extra relation
         left_id, right_id = alignment
         alignment_relation_id = get_num_ids(mapped_triples[:, 1])
@@ -447,8 +440,8 @@ def iter_entity_mappings(
     :yields: explicit id remappings
     """
     old, new = (torch.cat(tensors, dim=0) for tensors in zip(*old_new_ids_pairs, strict=False))
-    offsets = offsets.tolist() + [get_num_ids(old)]
-    for low, high in zip(offsets, offsets[1:], strict=False):
+    offsets = [*offsets.tolist(), get_num_ids(old)]
+    for low, high in itertools.pairwise(offsets):
         mask = (low <= old) & (old < high)
         this_old = old[mask] - low
         this_new = new[mask]
@@ -458,13 +451,12 @@ def iter_entity_mappings(
 class CollapseGraphPairCombinator(GraphPairCombinator[FactoryType]):
     """This combinator merges all matching entity pairs into a single ID."""
 
-    # docstr-coverage: inherited
-    def process(
+    def process(  # noqa: D102
         self,
         mapped_triples: MappedTriples,
         alignment: LongTensor,
         offsets: LongTensor,
-    ) -> ProcessedTuple:  # noqa: D102
+    ) -> ProcessedTuple:
         # determine connected components regarding the same-as relation (i.e., applies transitivity)
         entity_id_mapping = torch.arange(get_num_ids(mapped_triples[:, 0::2]))
         for cc in get_connected_components(pairs=alignment.t().tolist()):
@@ -489,6 +481,6 @@ class CollapseGraphPairCombinator(GraphPairCombinator[FactoryType]):
 
 
 graph_combinator_resolver: ClassResolver[GraphPairCombinator] = ClassResolver.from_subclasses(
-    base=GraphPairCombinator,
+    base=GraphPairCombinator,  # type: ignore[type-abstract]
     default=ExtraRelationGraphPairCombinator,
 )

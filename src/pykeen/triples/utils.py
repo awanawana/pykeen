@@ -2,10 +2,10 @@
 
 import pathlib
 from collections.abc import Callable, Sequence
-from typing import TextIO
+from typing import IO
 
 import numpy as np
-import pandas
+import pandas as pd
 import torch
 from class_resolver import FunctionResolver
 
@@ -13,12 +13,12 @@ from ..typing import LabeledTriples, LongTensor, MappedTriples
 
 __all__ = [
     "compute_compressed_adjacency_list",
-    "load_triples",
     "get_entities",
-    "get_relations",
-    "tensor_to_df",
-    "max_value",
     "get_num_ids",
+    "get_relations",
+    "load_triples",
+    "max_value",
+    "tensor_to_df",
 ]
 
 TRIPLES_DF_COLUMNS = ("head_id", "head_label", "relation_id", "relation_label", "tail_id", "tail_label")
@@ -49,7 +49,7 @@ class InvalidRemappingLengthError(ValueError):
 
 
 def load_triples(
-    path: str | pathlib.Path | TextIO,
+    path: str | pathlib.Path | IO[str],
     delimiter: str = "\t",
     encoding: str | None = None,
     column_remapping: Sequence[int] | None = None,
@@ -87,7 +87,7 @@ def load_triples(
         encoding = "utf-8"
     if column_remapping is not None and len(column_remapping) != 3:
         raise InvalidRemappingLengthError(len(column_remapping))
-    df = pandas.read_csv(
+    df = pd.read_csv(
         path,
         sep=delimiter,
         encoding=encoding,
@@ -114,7 +114,7 @@ def get_relations(triples: LongTensor) -> set[int]:
 def tensor_to_df(
     tensor: LongTensor,
     **kwargs: torch.Tensor | np.ndarray | Sequence,
-) -> pandas.DataFrame:
+) -> pd.DataFrame:
     """Take a tensor of triples and make a pandas dataframe with labels.
 
     :param tensor: shape: (n, 3) The triples, ID-based and in format (head_id, relation_id, tail_id).
@@ -145,7 +145,7 @@ def tensor_to_df(
         data[key] = values
 
     # convert to dataframe
-    rv = pandas.DataFrame(data=data)
+    rv = pd.DataFrame(data=data)
 
     # Re-order columns
     columns = list(TRIPLES_DF_COLUMNS[::2]) + sorted(set(rv.columns).difference(TRIPLES_DF_COLUMNS))
@@ -176,13 +176,11 @@ def compute_compressed_adjacency_list(
             adj_list[i] = compressed_adj_list[offsets[i]:offsets[i+1]]
     """
     num_entities = num_entities or mapped_triples[:, [0, 2]].max().item() + 1
-    num_triples = mapped_triples.shape[0]
     adj_lists: list[list[tuple[int, float]]] = [[] for _ in range(num_entities)]
     for i, (s, _, o) in enumerate(mapped_triples):
         adj_lists[s].append((i, o.item()))
         adj_lists[o].append((i, s.item()))
     degrees = torch.tensor([len(a) for a in adj_lists], dtype=torch.long)
-    assert torch.sum(degrees) == 2 * num_triples
 
     offset = torch.empty(num_entities, dtype=torch.long)
     offset[0] = 0

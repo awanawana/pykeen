@@ -29,7 +29,7 @@ service, start your notebook with the following two lines:
     ! pip install git+https://github.com/pykeen/pykeen.git
     pykeen.env()
 
-This will install the latest code, then output relevant system and environment information with :func:`pykeen.env`. It
+This will install the latest code, then output relevant system and environment information with :func:`~pykeen.env`. It
 works because Jupyter interprets any line beginning with a bang ``!`` that the remainder of the line should be
 interpreted as a bash command. If you want to make your notebook compatible on both hosted and local installations,
 change it slightly to check if PyKEEN is already installed:
@@ -41,7 +41,7 @@ change it slightly to check if PyKEEN is already installed:
 
 .. note::
 
-    Old versions of PyKEEN that used :mod:`class_resolve` version 0.3.4 and below loaded datasets via entrypoints. This
+    Old versions of PyKEEN that used :mod:`class_resolver` version 0.3.4 and below loaded datasets via entrypoints. This
     was unpredictable on Kaggle and Google Colab, so it was removed in https://github.com/pykeen/pykeen/pull/832. More
     information can also be found on `PyKEEN issue #373 <https://github.com/pykeen/pykeen/issues/373>`_.
 
@@ -104,7 +104,6 @@ Name             Description
 ``plotting``     Plotting with ``seaborn`` and generation of word clouds
 ``mlflow``       Tracking of results with ``mlflow``
 ``wandb``        Tracking of results with ``wandb``
-``neptune``      Tracking of results with ``neptune``
 ``tensorboard``  Tracking of results with :mod:`tensorboard` via :mod:`torch.utils.tensorboard`
 ``transformers`` Label-based initialization with ``transformers``.
 ``tests``        Code needed to run tests. Typically handled with ``tox -e py``

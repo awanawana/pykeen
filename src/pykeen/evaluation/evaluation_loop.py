@@ -7,8 +7,8 @@ from collections import defaultdict
 from collections.abc import Collection, Iterable, Mapping
 from typing import Any, Generic, TypeAlias, TypeVar
 
-import numpy
-import pandas
+import numpy as np
+import pandas as pd
 import torch
 from class_resolver import HintOrType, OptionalKwargs
 from torch.utils.data import Dataset
@@ -25,11 +25,9 @@ from ..utils import determine_maximum_batch_size, upgrade_to_sequence
 
 __all__ = [
     "AdditionalFilterTriplesHint",
-    # Evaluation loops
     "EvaluationLoop",
-    "LCWAEvaluationLoop",
-    # Evaluation datasets
     "LCWAEvaluationDataset",
+    "LCWAEvaluationLoop",
 ]
 
 logger = logging.getLogger(__name__)
@@ -47,16 +45,15 @@ def _hasher(d: Mapping[str, Any]) -> int:
 
     :returns: the dataset's ID
     """
-    obj = d["loop"]
-    assert isinstance(obj, EvaluationLoop)
-    obj = obj.dataset
-    return id(obj)
+    loop: EvaluationLoop = d["loop"]
+    return id(loop.dataset)
 
 
-@maximize_memory_utilization(hasher=_hasher)
+@maximize_memory_utilization(parameter_name=("batch_size", "slice_size"), hasher=_hasher)
 def _evaluate(
     loop: "EvaluationLoop",
     batch_size: int,
+    slice_size: int,
     use_tqdm: bool,
     tqdm_kwargs: OptionalKwargs,
     **kwargs,
@@ -69,6 +66,7 @@ def _evaluate(
 
     :param loop: the evaluation loop instance.
     :param batch_size: the batch size
+    :param slice_size: The optional slice size.
     :param use_tqdm: whether to use tqdm progress bar
     :param tqdm_kwargs: additional keyword-based parameters for the progress bar
     :param kwargs: additional keyword-based parameters passed to :meth:`EvaluationLoop.get_loader`
@@ -88,7 +86,7 @@ def _evaluate(
             **(tqdm_kwargs or {}),
         )
     for batch in loader:
-        loop.process_batch(batch=batch)
+        loop.process_batch(batch=batch, slice_size=slice_size)
     return loop.evaluator.finalize()
 
 
@@ -111,11 +109,17 @@ class EvaluationLoop(Generic[BatchType]):
         self.evaluator = evaluator
         self.dataset = dataset
 
+    @property
+    def mode(self) -> InductiveMode | None:
+        """Get the mode from the evaluator."""
+        return self.evaluator.mode
+
     @abstractmethod
-    def process_batch(self, batch: BatchType) -> None:
+    def process_batch(self, batch: BatchType, slice_size: int | None = None) -> None:
         """Process a single batch.
 
         :param batch: one batch of evaluation samples from the dataset.
+        :param slice_size: The optional slice size.
         """
         raise NotImplementedError
 
@@ -146,6 +150,7 @@ class EvaluationLoop(Generic[BatchType]):
         self,
         # batch
         batch_size: int | None = None,
+        slice_size: int | None = None,
         # tqdm
         use_tqdm: bool = True,
         tqdm_kwargs: OptionalKwargs = None,
@@ -159,6 +164,7 @@ class EvaluationLoop(Generic[BatchType]):
             the contained model will be set to evaluation mode.
 
         :param batch_size: the batch size. If None, enable automatic memory optimization to maximize memory utilization.
+        :param slice_size: the slice size. If None, enable automatic slicing.
         :param use_tqdm: whether to use tqdm progress bar
         :param tqdm_kwargs: additional keyword-based parameters passed to tqdm
         :param kwargs: additional keyword-based parameters passed to :meth:`get_loader`
@@ -169,12 +175,17 @@ class EvaluationLoop(Generic[BatchType]):
         batch_size = determine_maximum_batch_size(
             batch_size=batch_size, device=self.model.device, maximum_batch_size=len(self.dataset)
         )
+        # set upper limit for slice size
+        # TODO: if we knew the targets here, we could guess this better
+        if slice_size is None:
+            slice_size = max(self.model.num_entities, self.model.num_relations)
         # set model to evaluation mode
         self.model.eval()
         # delegate to AMO wrapper
         return _evaluate(
             loop=self,
             batch_size=batch_size,
+            slice_size=slice_size,
             use_tqdm=use_tqdm,
             tqdm_kwargs=tqdm_kwargs,
             **kwargs,
@@ -186,16 +197,16 @@ class FilterIndex:
     """An index structure for filtering (roughly following CSR)."""
 
     # The key-id for each triple, shape: (num_triples,)
-    triple_id_to_key_id: numpy.ndarray
+    triple_id_to_key_id: np.ndarray
 
     #: the number of targets for each key, shape: (num_unique_keys + 1,)
-    bounds: numpy.ndarray
+    bounds: np.ndarray
 
     #: the concatenation of unique targets for each key (use bounds to select appropriate sub-array)
     indices: LongTensor
 
     @classmethod
-    def from_df(cls, df: pandas.DataFrame, target: Target) -> "FilterIndex":
+    def from_df(cls, df: pd.DataFrame, target: Target) -> "FilterIndex":
         """Create index from dataframe.
 
         :param df: the dataframe, comprising columns [LABEL_HEAD, LABEL_RELATION, LABEL_TAIL]
@@ -213,7 +224,7 @@ class FilterIndex:
         # group key = everything except the prediction target
         key = [c for c in df.columns if c != target]
         # initialize data structure
-        triple_id_to_key_id = numpy.empty_like(df.index)
+        triple_id_to_key_id = np.empty_like(df.index)
         indices = []
         bounds = [0]
         # group by key
@@ -225,9 +236,9 @@ class FilterIndex:
         # convert lists to arrays
         indices = torch.as_tensor(indices)
         # instantiate
-        return cls(triple_id_to_key_id=triple_id_to_key_id, bounds=numpy.asarray(bounds), indices=indices)
+        return cls(triple_id_to_key_id=triple_id_to_key_id, bounds=np.asarray(bounds), indices=indices)
 
-    def __getitem__(self, item: int) -> numpy.ndarray:  # noqa: D105
+    def __getitem__(self, item: int) -> np.ndarray:
         # return indices corresponding to the `item`-th triple
         key_id = self.triple_id_to_key_id[item]
         low, high = self.bounds[key_id : key_id + 2]
@@ -262,6 +273,11 @@ class LCWAEvaluationDataset(Dataset[Mapping[Target, tuple[MappedTriples, torch.T
         if targets is None:
             targets = [LABEL_HEAD, LABEL_TAIL]
         mapped_triples = get_mapped_triples(mapped_triples=mapped_triples, factory=factory)
+        # note: a single tensor or triples factory is a valid hint, and neither has a meaningful truth value;
+        # hence we normalize to a sequence before checking whether anything was passed at all
+        additional_filter_triples = (
+            [] if additional_filter_triples is None else list(upgrade_to_sequence(additional_filter_triples))
+        )
 
         self.mapped_triples = mapped_triples
         self.num_triples = mapped_triples.shape[0]
@@ -271,13 +287,8 @@ class LCWAEvaluationDataset(Dataset[Mapping[Target, tuple[MappedTriples, torch.T
         if filtered:
             if not additional_filter_triples:
                 logger.warning("Enabled filtered evaluation, but not additional filter triples are passed.")
-            df = pandas.DataFrame(
-                data=torch.cat(
-                    [
-                        mapped_triples,
-                        *(get_mapped_triples(x) for x in upgrade_to_sequence(additional_filter_triples or [])),
-                    ]
-                ),
+            df = pd.DataFrame(
+                data=torch.cat([mapped_triples, *(get_mapped_triples(x) for x in additional_filter_triples)]),
                 columns=COLUMN_LABELS,
             )
             self.filter_indices = {target: FilterIndex.from_df(df=df, target=target) for target in targets}
@@ -291,10 +302,10 @@ class LCWAEvaluationDataset(Dataset[Mapping[Target, tuple[MappedTriples, torch.T
         """Return the number of targets."""
         return len(self.targets)
 
-    def __len__(self) -> int:  # noqa: D105
+    def __len__(self) -> int:
         return self.num_triples * self.num_targets
 
-    def __getitem__(self, index: int) -> tuple[Target, MappedTriples, LongTensor | None]:  # noqa: D105
+    def __getitem__(self, index: int) -> tuple[Target, MappedTriples, LongTensor | None]:
         # sorted by target -> most of the batches only have a single target
         target_id, index = divmod(index, self.num_triples)
         target = self.targets[target_id]
@@ -348,7 +359,6 @@ class LCWAEvaluationLoop(EvaluationLoop[Mapping[Target, MappedTriples]]):
         evaluator: HintOrType[Evaluator] = None,
         evaluator_kwargs: OptionalKwargs = None,
         targets: Collection[Target] = (LABEL_HEAD, LABEL_TAIL),
-        mode: InductiveMode | None = None,
         additional_filter_triples: AdditionalFilterTriplesHint = None,
         **kwargs,
     ) -> None:
@@ -358,7 +368,6 @@ class LCWAEvaluationLoop(EvaluationLoop[Mapping[Target, MappedTriples]]):
         :param evaluator: the evaluator, or a hint thereof
         :param evaluator_kwargs: additional keyword-based parameters for instantiating the evaluator
         :param targets: the prediction targets.
-        :param mode: the inductive mode, or None for transductive evaluation
         :param additional_filter_triples: additional filter triples to use for creating the filter
         :param kwargs: additional keyword-based parameters passed to :meth:`EvaluationLoop.__init__`. Should not contain
             the keys `dataset` or `evaluator`.
@@ -379,31 +388,31 @@ class LCWAEvaluationLoop(EvaluationLoop[Mapping[Target, MappedTriples]]):
             **kwargs,
         )
         self.targets = targets
-        self.mode = mode
 
-    # docstr-coverage: inherited
     def get_collator(self):  # noqa: D102
         return LCWAEvaluationDataset.collate
 
-    # docstr-coverage: inherited
-    def process_batch(self, batch: Mapping[Target, MappedTriples]) -> None:  # noqa: D102
+    def process_batch(self, batch: Mapping[Target, MappedTriples], slice_size: int | None = None) -> None:  # noqa: D102
         # note: most of the time, this loop will only make a single iteration, since the evaluation dataset typically is
         #       not shuffled, and contains evaluation ranking tasks sorted by target
         for target, (hrt_batch, filter_batch) in batch.items():
             # TODO: in theory, we could make a single score calculation for e.g.,
             # {(h, r, t1), (h, r, t1), ..., (h, r, tk)}
             # predict scores for all candidates
-            scores = self.model.predict(hrt_batch=hrt_batch, target=target, mode=self.mode)
-            true_scores = dense_positive_mask = None
+            scores = self.model.predict(hrt_batch=hrt_batch, target=target, mode=self.mode, slice_size=slice_size)
+            dense_positive_mask = None
+
+            # the true score is required for ranking, independent of whether the filtered protocol is used;
+            # filtering only decides whether the *other* positives are masked out beforehand.
+            batch_ids = torch.arange(scores.shape[0], device=scores.device)
+            target_ids = hrt_batch[:, TARGET_TO_INDEX[target]]
+            # shape: (batch_size, 1)
+            true_scores = scores[batch_ids, target_ids, None]
 
             # filter scores
             if self.evaluator.filtered:
                 if filter_batch is None:
                     raise AssertionError("Filter indices are required to filter scores.")
-                # extract true scores
-                batch_ids = torch.arange(scores.shape[0], device=scores.device)
-                target_ids = hrt_batch[:, TARGET_TO_INDEX[target]]
-                true_scores = scores[batch_ids, target_ids, None]
                 # replace by nan
                 scores = filter_scores_(scores=scores, filter_batch=filter_batch)
                 # rewrite true scores
@@ -411,11 +420,13 @@ class LCWAEvaluationLoop(EvaluationLoop[Mapping[Target, MappedTriples]]):
 
             # create dense positive masks
             # TODO: afaik, dense positive masks are not used on GPU -> we do not need to move the masks around
-            elif self.evaluator.requires_positive_mask:
+            # note: an evaluator may require *both* filtering and the dense masks
+            if self.evaluator.requires_positive_mask:
                 if filter_batch is None:
                     raise AssertionError("Filter indices are required to create dense positive masks.")
                 dense_positive_mask = torch.zeros_like(scores, dtype=torch.bool, device=filter_batch.device)
-                dense_positive_mask[filter_batch[:, 0], filter_batch[:, 0]] = True
+                # filter_batch is given as (batch_id, entity_id) pairs
+                dense_positive_mask[filter_batch[:, 0], filter_batch[:, 1]] = True
 
             # delegate processing of scores to the evaluator
             self.evaluator.process_scores_(

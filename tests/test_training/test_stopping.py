@@ -1,6 +1,7 @@
 """Test that training loops work correctly."""
 
 import unittest
+from typing import ClassVar
 
 import torch
 from torch import optim
@@ -39,7 +40,7 @@ class DummyTrainingLoop(SLCWATrainingLoop):
         stop: int,
         label_smoothing: float = 0.0,
         slice_size: int | None = None,
-    ) -> torch.FloatTensor:  # noqa: D102
+    ) -> torch.FloatTensor:
         assert (stop - start) <= self.sub_batch_size
 
         # check for empty batches
@@ -62,13 +63,13 @@ class TestTrainingEarlyStopping(unittest.TestCase):
     #: The window size used by the early stopper
     patience: int = 2
     #: The mock losses the mock evaluator will return
-    mock_losses: list[float] = [10.0, 9.0, 8.0, 8.0, 8.0, 8.0]
+    mock_losses: ClassVar[list[float]] = [10.0, 9.0, 8.0, 8.0, 8.0, 8.0]
     #: The (zeroed) index  - 1 at which stopping will occur
     stop_constant: int = 4
     #: The minimum improvement
     delta: float = 0.0
     #: The best results
-    best_results: list[float] = [10.0, 9.0, 8.0, 8.0, 8.0]
+    best_results: ClassVar[list[float]] = [10.0, 9.0, 8.0, 8.0, 8.0]
 
     def setUp(self):
         """Prepare for testing the early stopper."""
